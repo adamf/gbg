@@ -28,8 +28,12 @@ one server-side, or check a `.DAX` into git is the wrong change.
   names, with hit points, saving throws, coins and the selected-character view the
   scripts read at 0x6B00. Damage lands; nobody fights back yet.
 
-Not here yet, in roughly the order they are needed: monsters, combat, spells, resting,
-and writing saved games. Script commands that need
+- **Fights, rest and saves** — round-based combat against the area's monster records,
+  camping that heals and can be interrupted by the level's own encounter odds, a temple
+  that heals for gold, and a save in the browser's storage with a Continue button.
+
+Not here yet, in roughly the order they are needed: the tactical combat grid, spells,
+shops and training, the city overview map, and writing the original's save files. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together

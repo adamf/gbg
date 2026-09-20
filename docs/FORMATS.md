@@ -303,11 +303,14 @@ The five entry points run in a fixed order: `start` when a script is loaded, the
 after every step. `preCampCheck` and `campInterrupted` bracket resting, which is not
 built yet.
 
+Two area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
+(hours) and how likely (percent) a resting party is interrupted, and `0x6DE2`/`0x6E6C`
+set before a COMBAT with no monsters loaded mean the temple and the shop.
+
 ### What the interpreter does not do yet
 
-Combat, spells, items in play, CHECK PARTY and resting. Those commands run, do nothing,
-and say so in the page's notes. DAMAGE, WHO, TREASURE, PARTY STRENGTH and the selected
-character's fields work against the party from the saved game.
+Spells, items in play, CHECK PARTY and shops. Those commands run, do nothing, and say
+so in the page's notes. Combat is resolved a round at a time without the grid.
 
 ---
 

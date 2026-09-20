@@ -19,6 +19,7 @@ import {
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
 import { Roster, type Member } from './roster.js'
+import type { Character, Item } from '../formats/character.js'
 import { Combat, labelMonsters, type Combatant } from './combat.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
@@ -47,6 +48,8 @@ export interface SessionUi {
   party(members: readonly Member[], selected: number): void
   /** Picks a party member by index. */
   who(prompt: string, members: readonly Member[]): Promise<number>
+  /** The game was saved to the browser. */
+  saved(): void
   combat(monsters: readonly MonsterGroup[]): Promise<CombatOutcome>
   parlay(): Promise<number>
   /** Something worth telling a developer, not the player. */
@@ -54,6 +57,18 @@ export interface SessionUi {
 }
 
 const START_HOUR = 8
+const HOURS_PER_REST = 8
+
+/** Everything a game needs to pick up where it left off. Stays in the browser. */
+export interface Snapshot {
+  version: 1
+  area: number
+  blockId: number
+  mapId: number
+  party: PartyState
+  memory: { words: number[]; strings: [number, string][] }
+  members: { character: Character; items: Item[] }[]
+}
 
 export class GameSession {
   readonly memory = new EclMemory()
@@ -142,6 +157,91 @@ export class GameSession {
       await this.loadScript(blockId)
       await this.runStart()
     })
+  }
+
+  /** Picks up a saved snapshot: the same script, map and party as when it was taken. */
+  async load(snapshot: Snapshot): Promise<void> {
+    this.memory.restore(snapshot.memory)
+    this.roster.members = snapshot.members.map((m) => ({ character: m.character, items: m.items }))
+    this.area = snapshot.area
+    this.party = snapshot.party
+    this.positionSetByScript = true
+    const ref = await this.library.levelById(snapshot.mapId, this.area)
+    if (!ref) {
+      this.ui.note(`the saved map ${snapshot.mapId} is not in the folder`)
+      return
+    }
+    this.map = await this.library.level(ref)
+    this.mapRef = ref
+    this.textures = (await this.library.wallSetFor(ref)).textures
+    this.levelDirty = true
+    this.ui.party(this.roster.members, this.roster.selected)
+    await this.withScript(async () => {
+      await this.loadScript(snapshot.blockId)
+      // The script was already running when the game was saved, so no start entry.
+      this.memory.write(POOL_ADDRESSES.lastEclBlock, this.blockId)
+    })
+  }
+
+  snapshot(): Snapshot {
+    return {
+      version: 1,
+      area: this.area,
+      blockId: this.blockId,
+      mapId: this.map?.id ?? 0,
+      party: { ...this.party },
+      memory: this.memory.snapshot(),
+      members: this.roster.members.map((m) => ({ character: m.character, items: m.items })),
+    }
+  }
+
+  /**
+   * Making camp: rest to heal, or save. The script gets its say first — the
+   * pre-camp entry can refuse — and while the party rests, the area's own odds
+   * decide whether something wanders in and the camp-interrupted entry runs.
+   */
+  async camp(): Promise<void> {
+    if (this.running || !this.program) return
+    await this.withScript(async () => {
+      if (await this.runEntry(this.program!.entryPoints.preCampCheck)) return
+      for (;;) {
+        const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax)
+        const choice = await this.ui.menu(
+          `CAMP. ${hurt.length === 0 ? 'EVERYONE IS WELL.' : `${hurt.length} NEED REST.`}`,
+          ['REST', 'SAVE GAME', 'LEAVE CAMP'], 'vertical')
+        if (choice === 0) {
+          if (await this.rest()) return
+        } else if (choice === 1) {
+          this.ui.saved()
+        } else {
+          return
+        }
+      }
+    })
+  }
+
+  /** One night's rest: a hit point back for each, unless something interrupts. Returns true if it did. */
+  private async rest(): Promise<boolean> {
+    const period = Math.max(1, this.memory.read(POOL_ADDRESSES.restPeriod) || HOURS_PER_REST)
+    const chance = this.memory.read(POOL_ADDRESSES.restChance)
+    for (let hour = 0; hour < HOURS_PER_REST; hour++) {
+      this.advanceTime(60)
+      if ((hour + 1) % period === 0 && chance > 0 && Math.floor(Math.random() * 100) < chance) {
+        this.ui.print('THE PARTY IS DISTURBED!', true)
+        await this.runEntry(this.program!.entryPoints.campInterrupted)
+        return true
+      }
+    }
+    for (const { character } of this.roster.members) {
+      if (character.status === 'unconscious') {
+        character.status = 'okay'
+        character.statusByte = 0
+      }
+      if (character.status === 'okay' && character.hpCurrent < character.hpMax) character.hpCurrent++
+    }
+    this.ui.print('THE PARTY RESTS.', true)
+    this.ui.party(this.roster.members, this.roster.selected)
+    return false
   }
 
   /** A movement key. Turns are free; steps run the script when they land. */
@@ -250,6 +350,18 @@ export class GameSession {
 
   /** Runs a fight against the groups LOAD MONSTER queued, a round at a time. */
   private async fight(groups: readonly MonsterGroup[]): Promise<CombatOutcome> {
+    if (groups.length === 0) {
+      if (this.memory.read(POOL_ADDRESSES.enterTemple) === 1) {
+        this.memory.write(POOL_ADDRESSES.enterTemple, 0)
+        await this.temple()
+      } else if (this.memory.read(POOL_ADDRESSES.enterShop) === 1) {
+        this.memory.write(POOL_ADDRESSES.enterShop, 0)
+        this.ui.print('THE SHOP IS NOT OPEN IN THIS BUILD.', true)
+        await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+      }
+      return 'won'
+    }
+
     const loaded: { member: Member; count: number }[] = []
     for (const group of groups) {
       const monster = await this.library.monster(this.area, group.id)
@@ -295,6 +407,35 @@ export class GameSession {
     if (outcome === 'lost') this.ui.print('THE PARTY HAS FALLEN.', true)
     this.ui.party(this.roster.members, this.roster.selected)
     return outcome
+  }
+
+  /** A temple heals the wounded for gold, one hit point a coin, the way clerics charge. */
+  private async temple(): Promise<void> {
+    for (;;) {
+      const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax || m.character.status !== 'okay')
+      const gold = this.roster.members.reduce((n, m) => n + (m.character.money[3] ?? 0), 0)
+      const choice = await this.ui.menu(`THE TEMPLE. YOU HAVE ${gold} GOLD.`, ['HEAL THE PARTY', 'LEAVE'], 'vertical')
+      if (choice !== 0) return
+      if (hurt.length === 0) {
+        this.ui.print('NOBODY NEEDS HEALING.', true)
+        continue
+      }
+      let paid = 0
+      for (const { character } of hurt) {
+        const need = character.hpMax - character.hpCurrent
+        const payer = this.roster.members.find((m) => (m.character.money[3] ?? 0) >= need)
+        if (!payer) continue
+        payer.character.money[3]! -= need
+        character.hpCurrent = character.hpMax
+        if (character.status !== 'dead') {
+          character.status = 'okay'
+          character.statusByte = 0
+        }
+        paid += need
+      }
+      this.ui.print(paid > 0 ? `THE CLERICS TEND YOUR WOUNDS FOR ${paid} GOLD.` : 'YOU CANNOT PAY.', true)
+      this.ui.party(this.roster.members, this.roster.selected)
+    }
   }
 
   // ---- time --------------------------------------------------------------------

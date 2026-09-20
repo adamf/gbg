@@ -8,7 +8,7 @@ import type { Rgba } from '../formats/ega.js'
 import type { GeoMap } from '../formats/geo.js'
 import { DungeonViewer } from '../render/viewer.js'
 import type { PartyState } from '../engine/party.js'
-import { GameSession, type MoveCommand, type SessionUi } from '../engine/session.js'
+import { GameSession, type MoveCommand, type SessionUi, type Snapshot } from '../engine/session.js'
 import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-vm.js'
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
@@ -40,6 +40,20 @@ const menuPrompt = el('menuPrompt')
 const menuBox = el('menu')
 const picCanvas = el<HTMLCanvasElement>('pic')
 const partyPanel = el('party')
+const continueButton = el<HTMLButtonElement>('continue')
+
+const SAVE_KEY = 'goldbox-web:save'
+
+function storedSnapshot(): Snapshot | undefined {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY)
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as Snapshot
+    return parsed.version === 1 ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
 const notes = el('notes')
 
 let library: GameLibrary | undefined
@@ -86,6 +100,7 @@ async function useSource(source: FileSource): Promise<void> {
     )
     levelsPanel.style.display = 'block'
     warnings.textContent = ''
+    continueButton.hidden = storedSnapshot() === undefined
   } catch (error) {
     setStatus(`Could not read that folder: ${error instanceof Error ? error.message : String(error)}`, true)
   }
@@ -255,6 +270,17 @@ const pageUi: SessionUi = {
     return pageUi.menu(prompt || 'WHO?', members.map((m) => m.character.name), 'vertical')
   },
 
+  saved() {
+    if (!session) return
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(session.snapshot()))
+      pageUi.print('THE GAME IS SAVED IN THIS BROWSER.', true)
+    } catch (error) {
+      pageUi.print('THE GAME COULD NOT BE SAVED HERE.', true)
+      note(`save failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  },
+
   note,
 }
 
@@ -308,6 +334,14 @@ async function newGame(): Promise<void> {
   }
   const session = await openPlayScreen(lib)
   await session.resume(saved)
+}
+
+async function continueGame(): Promise<void> {
+  const lib = library
+  const snapshot = storedSnapshot()
+  if (!lib || !snapshot) return
+  const session = await openPlayScreen(lib)
+  await session.load(snapshot)
 }
 
 async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
@@ -383,6 +417,12 @@ window.addEventListener('keydown', (event) => {
         menu.choose(index)
       }
     }
+    return
+  }
+
+  if (event.code === 'KeyC' && session && !session.busy) {
+    event.preventDefault()
+    void session.camp()
     return
   }
 
@@ -474,6 +514,7 @@ async function collectEntry(entry: FileSystemEntry, into: File[]): Promise<void>
 
 el('enter').addEventListener('click', () => void enterLevel())
 el('newGame').addEventListener('click', () => void newGame())
+continueButton.addEventListener('click', () => void continueGame())
 el('back').addEventListener('click', leaveLevel)
 
 // Dev server with GOLDBOX_DATA set: load that folder straight away.

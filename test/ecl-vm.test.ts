@@ -227,3 +227,29 @@ describe('the outside world', () => {
     expect(memory.read(MAPPED.wallAhead)).toBe(3)
   })
 })
+
+describe('saving', () => {
+  it('round-trips the saved address ranges and stored strings', async () => {
+    const { EclMemory } = await import('../src/engine/ecl-vm.js')
+    const memory = new EclMemory()
+    memory.write(0x4a34, 64)
+    memory.write(0x6dd2, 2)
+    memory.write(0x9800, 0x1234)
+    memory.writeString(0x9800, 'GOBLINS')
+    memory.write(0x1000, 99) // outside the saved ranges
+    const restored = new EclMemory()
+    restored.restore(JSON.parse(JSON.stringify(memory.snapshot())))
+    expect(restored.read(0x4a34)).toBe(64)
+    expect(restored.read(0x6dd2)).toBe(2)
+    expect(restored.read(0x9800)).toBe(0x1234)
+    expect(restored.readString(0x9800)).toBe('GOBLINS')
+    expect(restored.read(0x1000)).toBe(0)
+  })
+
+  it('sends COMBAT to the host even with nobody loaded, for shops and temples', async () => {
+    const calls: number[] = []
+    const host: EclHost = { combat: async (monsters) => { calls.push(monsters.length); return 'won' } }
+    await runProgram(assemble([ins(0x24), ins(EXIT)]), host)
+    expect(calls).toEqual([0])
+  })
+})

@@ -60,6 +60,12 @@ export const POOL_ADDRESSES = {
   /** Scratch the original reset whenever a script was loaded fresh. */
   scratchStart: 0x4a00,
   scratchEnd: 0x4a20,
+  /** Resting: a check every this many hours, and the chance of an interruption. */
+  restPeriod: 0x6dd2,
+  restChance: 0x6dd3,
+  /** Set by a script before COMBAT to mean a temple or a shop rather than a fight. */
+  enterTemple: 0x6de2,
+  enterShop: 0x6e6c,
   /** The per-area scratch words the scripts use as local variables. */
   localsStart: 0x6e79,
   localsEnd: 0x6e90,
@@ -99,6 +105,9 @@ export interface CharacterHook {
   read(offset: number): number | undefined
   write(offset: number, value: number): boolean
 }
+
+/** The address ranges a saved game carries, matching the original's three blocks. */
+const SAVED_RANGES: readonly [number, number][] = [[0x4900, 0x4d00], [0x6b00, 0x7000], [0x9700, 0x9900]]
 
 /** A 64K address space with the script image mapped in and the world mapped over it. */
 export class EclMemory {
@@ -194,6 +203,20 @@ export class EclMemory {
     for (let i = 0; i + 1 < bytes.length; i += 2) {
       this.words[(firstAddress + i / 2) & 0xffff] = bytes[i]! | (bytes[i + 1]! << 8)
     }
+  }
+
+  /** The stored words and strings, for saving. The script image is reloaded, not saved. */
+  snapshot(): { words: number[]; strings: [number, string][] } {
+    const words: number[] = []
+    for (const [from, to] of SAVED_RANGES) for (let a = from; a < to; a++) words.push(this.words[a]!)
+    return { words, strings: [...this.strings] }
+  }
+
+  restore(saved: { words: number[]; strings: [number, string][] }): void {
+    let i = 0
+    for (const [from, to] of SAVED_RANGES) for (let a = from; a < to; a++) this.words[a] = saved.words[i++] ?? 0
+    this.strings.clear()
+    for (const [address, text] of saved.strings) this.strings.set(address, text)
   }
 
   /** Zeroes a range of words, the way the original reset its scratch on a fresh script. */
@@ -635,12 +658,12 @@ export class EclVm {
       }
 
       case 0x24: { // COMBAT
+        // With monsters loaded this is a fight. Without, the original opened the shop
+        // or temple the area flags asked for, or handed over pooled treasure.
         this.pc++
-        if (this.monsters.length > 0) {
-          this.lastCombat = this.host.combat ? await this.host.combat(this.monsters) : 'won'
-          this.monsters.length = 0
-          this.host.clearMonsters?.()
-        }
+        this.lastCombat = this.host.combat ? await this.host.combat(this.monsters) : 'won'
+        this.monsters.length = 0
+        this.host.clearMonsters?.()
         return
       }
 
