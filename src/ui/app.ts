@@ -13,7 +13,7 @@ import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-v
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
 import { BATTLE_STEPS, type Battle, type Fighter } from '../engine/battle.js'
-import { drawBattle } from './battle-view.js'
+import { drawBattle, type BattleArt } from './battle-view.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
@@ -54,6 +54,24 @@ const battleActions = el('battleActions')
 
 /** The player's turn in a battle, so keys can move the fighter. */
 let openTurn: { battle: Battle; fighter: Fighter; refresh(): void } | undefined
+let battleArt: BattleArt | undefined
+const battleInfo = el('battleInfo')
+
+/** The side panel the original kept: who is up, their hit points, armour and weapon. */
+function showFighter(f: Fighter | undefined): void {
+  if (!f) {
+    battleInfo.textContent = ''
+    return
+  }
+  const c = f.combatant.member.character
+  const weapon = f.combatant.member.items.find((item) => item.readied && item.type < 48)
+  battleInfo.textContent = [
+    f.combatant.label,
+    `HITPOINTS ${c.hpCurrent}`,
+    `AC ${c.ac}`,
+    weapon ? weapon.name.toUpperCase() : c.attacks.range ? 'MISSILES' : 'HANDS',
+  ].join('\n')
+}
 const continueButton = el<HTMLButtonElement>('continue')
 
 const SAVE_KEY = 'goldbox-web:save'
@@ -276,10 +294,15 @@ const pageUi: SessionUi = {
     return chosen === 0 ? 'tactical' : 'quick'
   },
 
+  battleArt(tiles, outdoors) {
+    battleArt = { tiles: [...tiles], outdoors }
+  },
+
   async battleUpdate(battle, lines) {
     battlePanel.classList.add('shown')
     battleActions.replaceChildren()
-    drawBattle(battleCanvas, battle, battle.current)
+    drawBattle(battleCanvas, battle, battle.current, battleArt)
+    showFighter(battle.current)
     if (lines.length > 0) {
       pageUi.print(lines.join('\n'), true)
       await wait(Math.min(1200, 250 + lines.length * 250))
@@ -300,7 +323,8 @@ const pageUi: SessionUi = {
         resolve(how)
       }
       const refresh = (): void => {
-        drawBattle(battleCanvas, battle, fighter)
+        drawBattle(battleCanvas, battle, fighter, battleArt)
+        showFighter(fighter)
         battleActions.replaceChildren()
         const button = (key: string, text: string, enabled: boolean, onClick: () => void): void => {
           const b = document.createElement('button')
@@ -331,7 +355,7 @@ const pageUi: SessionUi = {
         if (!target) return
         const lines = battle.attack(fighter, target)
         pageUi.print(lines.join('\n'), true)
-        drawBattle(battleCanvas, battle, fighter)
+        drawBattle(battleCanvas, battle, fighter, battleArt)
         pageUi.party([], 0)
         if (battle.over) finish('done')
         else refresh()
@@ -343,6 +367,7 @@ const pageUi: SessionUi = {
 
   battleEnd() {
     openTurn = undefined
+    battleArt = undefined
     battlePanel.classList.remove('shown')
   },
 

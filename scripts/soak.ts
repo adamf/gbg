@@ -41,6 +41,7 @@ const ui: SessionUi = {
   who: async (_prompt, members) => random(Math.max(0, members.length - 1)),
   parlay: async () => random(4),
   battleMode: async () => 'quick',
+  battleArt: () => {},
   battleUpdate: async () => {},
   battleTurn: async () => 'done',
   battleEnd: () => {},

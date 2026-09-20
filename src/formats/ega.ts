@@ -34,7 +34,7 @@ export interface PaletteOptions {
 }
 
 /** Filenames whose blocks use the combat palette (colour 0 transparent, 8 black). */
-const COMBAT_FILE_MARKERS = ['CPIC', 'CHEAD', 'CBODY', 'DUNGCOM', 'WILDCOM', 'RANDCOM', 'COMSPR']
+const COMBAT_FILE_MARKERS = ['ICON', 'CPIC', 'CHEAD', 'CBODY', 'DUNGCOM', 'WILDCOM', 'RANDCOM', 'COMSPR']
 
 export function usesCombatPalette(fileName: string): boolean {
   const upper = fileName.toUpperCase()

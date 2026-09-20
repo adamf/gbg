@@ -60,6 +60,8 @@ export interface SessionUi {
   combatRound(round: number, lines: readonly string[], party: readonly Combatant[], monsters: readonly Combatant[]): Promise<'fight' | 'cast' | 'run'>
   /** Which kind of fight the player wants. */
   battleMode(monsters: readonly Combatant[]): Promise<'tactical' | 'quick'>
+  /** The art a battle is drawn with, before it starts. */
+  battleArt(tiles: readonly Rgba[], outdoors: boolean): void
   /** Shows the battle after something happened; `lines` say what. */
   battleUpdate(battle: Battle, lines: readonly string[]): Promise<void>
   /**
@@ -579,6 +581,7 @@ export class GameSession {
   /** The fight on the grid: turns until one side is done, then the same reckoning. */
   private async tacticalFight(party: Combatant[], monsters: Combatant[], random: (max: number) => number): Promise<CombatOutcome> {
     const battle = new Battle(this.map!, party, monsters, this.party, 1, random)
+    this.ui.battleArt(await this.library.combatTiles(this.overhead), this.overhead)
     let outcome: CombatOutcome = 'won'
     await this.ui.battleUpdate(battle, [`${monsters.length} FOE${monsters.length === 1 ? '' : 'S'}: ${[...new Set(monsters.map((m) => m.member.character.name))].join(', ')}.`])
 

@@ -327,6 +327,15 @@ export class GameLibrary {
     return this.artBlock(`SPRIT${area}.DAX`, id)
   }
 
+  /** The combat backdrop tiles: cobbles underground, ground and trees outdoors. */
+  async combatTiles(outdoors: boolean): Promise<Rgba[]> {
+    const file = outdoors ? 'WILDCOM.DAX' : 'DUNGCOM.DAX'
+    const archive = await this.archive(file)
+    const block = archive?.blocks[0]
+    if (!block) return []
+    return decodeAnyImage(block.data, file)?.frames ?? []
+  }
+
   /** A monster's combat icon: the area's CPIC block the script named. */
   async combatIcon(area: number, id: number): Promise<Rgba | undefined> {
     return (await this.artBlock(`CPIC${area}.DAX`, id))?.frames[0]

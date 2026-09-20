@@ -1,88 +1,155 @@
 /**
- * Draws a battle top-down: the squares, the walls the dungeon put there, and who
- * stands where. The party is gold, monsters red, the fighter whose turn it is ringed.
+ * Draws a battle the way the original's combat screen did: a flat floor with no
+ * grid, walls as bands of the game's own cobble art — a strip above a horizontal
+ * edge, a strip slanting down-right for a vertical one, a pale cap along the top —
+ * and outdoors, trees and rocks from the wilderness set along the boundaries. The
+ * icons stand on the floor and the fighter whose turn it is wears a white box.
  */
 
 import type { Battle, Fighter } from '../engine/battle.js'
+import type { Rgba } from '../formats/ega.js'
 
-const SQUARE = 30
+export const SQUARE = 36
+const BAND = 0.55
+const CAP = 3
 
-const iconCache = new WeakMap<object, HTMLCanvasElement>()
+export interface BattleArt {
+  tiles: Rgba[]
+  outdoors: boolean
+}
 
-function iconCanvas(icon: { width: number; height: number; pixels: Uint8ClampedArray }): HTMLCanvasElement {
-  let canvas = iconCache.get(icon)
+const canvasCache = new WeakMap<object, HTMLCanvasElement>()
+
+function toCanvas(image: Rgba): HTMLCanvasElement {
+  let canvas = canvasCache.get(image)
   if (canvas) return canvas
   canvas = document.createElement('canvas')
-  canvas.width = icon.width
-  canvas.height = icon.height
-  canvas.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(icon.pixels), icon.width, icon.height), 0, 0)
-  iconCache.set(icon, canvas)
+  canvas.width = image.width
+  canvas.height = image.height
+  canvas.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(image.pixels), image.width, image.height), 0, 0)
+  canvasCache.set(image, canvas)
   return canvas
 }
 
-export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fighter | undefined, reachable?: Set<string>): void {
-  canvas.width = battle.width * SQUARE + 1
-  canvas.height = battle.height * SQUARE + 1
+/** A deterministic pick from the scenery, so the same square always shows the same tree. */
+function scenery(tiles: Rgba[], x: number, y: number): Rgba | undefined {
+  const choices = [0, 1, 2, 3, 5, 6, 7]
+  const index = choices[(x * 7 + y * 13) % choices.length]!
+  return tiles[index]
+}
+
+export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fighter | undefined, art?: BattleArt): void {
+  canvas.width = battle.width * SQUARE
+  canvas.height = battle.height * SQUARE
   const g = canvas.getContext('2d')
   if (!g) return
-  g.fillStyle = '#0b0d12'
+  g.imageSmoothingEnabled = false
+
+  const outdoors = art?.outdoors ?? false
+  const scale = SQUARE / 24
+  g.fillStyle = outdoors ? '#2d5a27' : '#5c5c5c'
   g.fillRect(0, 0, canvas.width, canvas.height)
 
+  // The cobble fill: the set's plain tile, repeated at the square's scale.
+  const cobble = !outdoors && art?.tiles[1] ? g.createPattern(toCanvas(art.tiles[1]), 'repeat') : null
+  if (cobble) cobble.setTransform(new DOMMatrix().scale(scale))
+  const fill = (): void => {
+    g.fillStyle = cobble ?? '#8a8a8a'
+  }
+  const cap = (x1: number, y1: number, x2: number, y2: number): void => {
+    g.strokeStyle = '#d8d8d8'
+    g.lineWidth = CAP
+    g.beginPath()
+    g.moveTo(x1, y1)
+    g.lineTo(x2, y2)
+    g.stroke()
+  }
+
+  // Rock and, outdoors, the wild beyond the edge.
   for (let y = 0; y < battle.height; y++) {
     for (let x = 0; x < battle.width; x++) {
+      if (!battle.isSolid(x, y)) continue
       const px = x * SQUARE
       const py = y * SQUARE
-      if (battle.isSolid(x, y)) {
-        g.fillStyle = '#1a1d26'
+      if (outdoors) {
+        const tree = art && scenery(art.tiles, x, y)
+        if (tree) g.drawImage(toCanvas(tree), px, py, SQUARE, SQUARE)
+      } else {
+        fill()
         g.fillRect(px, py, SQUARE, SQUARE)
-        continue
       }
-      g.fillStyle = reachable?.has(`${x},${y}`) ? '#2a2a1a' : (x + y) % 2 === 0 ? '#181b24' : '#141720'
-      g.fillRect(px, py, SQUARE, SQUARE)
-      g.strokeStyle = '#c9a227'
-      g.lineWidth = 3
-      g.beginPath()
-      if (battle.hasWall(x, y, 0, -1)) { g.moveTo(px, py); g.lineTo(px + SQUARE, py) }
-      if (battle.hasWall(x, y, 0, 1)) { g.moveTo(px, py + SQUARE); g.lineTo(px + SQUARE, py + SQUARE) }
-      if (battle.hasWall(x, y, -1, 0)) { g.moveTo(px, py); g.lineTo(px, py + SQUARE) }
-      if (battle.hasWall(x, y, 1, 0)) { g.moveTo(px + SQUARE, py); g.lineTo(px + SQUARE, py + SQUARE) }
-      g.stroke()
+    }
+  }
+
+  // Walls, each boundary once: the slanted band for a vertical edge, the strip
+  // above a horizontal one, both capped in pale stone.
+  const band = SQUARE * BAND
+  for (let y = 0; y < battle.height; y++) {
+    for (let x = 0; x < battle.width; x++) {
+      if (battle.isSolid(x, y)) continue
+      const px = x * SQUARE
+      const py = y * SQUARE
+      const edges: { dx: number; dy: number }[] = []
+      if (battle.hasWall(x, y, 0, -1)) edges.push({ dx: 0, dy: -1 })
+      if (battle.hasWall(x, y, 0, 1) && (y + 1 >= battle.height || battle.isSolid(x, y + 1) || !battle.hasWall(x, y + 1, 0, -1))) edges.push({ dx: 0, dy: 1 })
+      if (battle.hasWall(x, y, 1, 0)) edges.push({ dx: 1, dy: 0 })
+      if (battle.hasWall(x, y, -1, 0) && (x === 0 || battle.isSolid(x - 1, y) || !battle.hasWall(x - 1, y, 1, 0))) edges.push({ dx: -1, dy: 0 })
+
+      for (const edge of edges) {
+        if (outdoors) {
+          const tree = art && scenery(art.tiles, x + edge.dx * 3, y + edge.dy * 5)
+          if (!tree) continue
+          const tx = px + edge.dx * SQUARE * 0.5
+          const ty = py + edge.dy * SQUARE * 0.5
+          g.drawImage(toCanvas(tree), tx, ty, SQUARE, SQUARE)
+          continue
+        }
+        fill()
+        if (edge.dy !== 0) {
+          const lineY = edge.dy < 0 ? py : py + SQUARE
+          g.fillRect(px, lineY - band, SQUARE, band)
+          cap(px, lineY - band, px + SQUARE, lineY - band)
+        } else {
+          const lineX = edge.dx < 0 ? px : px + SQUARE
+          g.beginPath()
+          g.moveTo(lineX, py)
+          g.lineTo(lineX + band, py)
+          g.lineTo(lineX + band + SQUARE, py + SQUARE)
+          g.lineTo(lineX + SQUARE, py + SQUARE)
+          g.closePath()
+          g.fill()
+          cap(lineX, py, lineX + SQUARE, py + SQUARE)
+        }
+      }
     }
   }
 
   for (const f of battle.fighters) {
     const c = f.combatant.member.character
     if (c.hpCurrent <= 0 && c.status !== 'okay' && c.status !== 'asleep' && c.status !== 'held') continue
-    const cx = f.x * SQUARE + SQUARE / 2
-    const cy = f.y * SQUARE + SQUARE / 2
+    const px = f.x * SQUARE
+    const py = f.y * SQUARE
     const helpless = c.status === 'asleep' || c.status === 'held'
+    if (f === active) {
+      g.fillStyle = '#e8e8e8'
+      g.fillRect(px, py, SQUARE, SQUARE)
+      g.fillStyle = outdoors ? '#2d5a27' : '#5c5c5c'
+      g.fillRect(px + 2, py + 2, SQUARE - 4, SQUARE - 4)
+    }
     if (f.combatant.icon) {
-      // The original's icon, magnified whole with no smoothing.
-      g.imageSmoothingEnabled = false
       g.globalAlpha = helpless ? 0.45 : 1
-      g.drawImage(iconCanvas(f.combatant.icon), f.x * SQUARE + 1, f.y * SQUARE + 1, SQUARE - 2, SQUARE - 2)
+      g.drawImage(toCanvas(f.combatant.icon), px + 2, py + 2, SQUARE - 4, SQUARE - 4)
       g.globalAlpha = 1
-      if (f === active) {
-        g.strokeStyle = '#ffffff'
-        g.lineWidth = 2
-        g.strokeRect(f.x * SQUARE + 1, f.y * SQUARE + 1, SQUARE - 2, SQUARE - 2)
-      }
       continue
     }
     g.beginPath()
-    g.arc(cx, cy, SQUARE * 0.38, 0, Math.PI * 2)
-    g.fillStyle = f.side === 'party' ? (helpless ? '#6b5a2a' : '#c9a227') : (helpless ? '#5a2a2a' : '#c0392b')
+    g.arc(px + SQUARE / 2, py + SQUARE / 2, SQUARE * 0.36, 0, Math.PI * 2)
+    g.fillStyle = f.side === 'party' ? '#c9a227' : '#c0392b'
     g.fill()
-    if (f === active) {
-      g.strokeStyle = '#ffffff'
-      g.lineWidth = 2
-      g.stroke()
-    }
-    g.fillStyle = f.side === 'party' ? '#1a1408' : '#fff0f0'
+    g.fillStyle = '#111'
     g.font = `bold ${Math.round(SQUARE * 0.5)}px ui-sans-serif, system-ui, sans-serif`
     g.textAlign = 'center'
     g.textBaseline = 'middle'
-    const suffix = f.combatant.label.match(/\d+$/)?.[0] ?? ''
-    g.fillText(c.name.charAt(0) + suffix, cx, cy + 1)
+    g.fillText(c.name.charAt(0) + (f.combatant.label.match(/\d+$/)?.[0] ?? ''), px + SQUARE / 2, py + SQUARE / 2 + 1)
   }
 }

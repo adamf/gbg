@@ -138,14 +138,27 @@
   #party tr.picked td.n { color: var(--accent); }
   #battle {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
-    background: #0d1017e6; border: 1px solid var(--panel-edge); border-radius: 12px;
-    padding: 10px; backdrop-filter: blur(6px); display: none;
+    background: #5c5c5c; border: 6px double #b03a2e; border-radius: 4px;
+    padding: 0; display: none; box-shadow: 0 12px 40px #000c;
   }
   #battle.shown { display: block; }
-  #battleMap { display: block; image-rendering: pixelated; }
-  #battleActions { display: flex; gap: 8px; margin-top: 8px; justify-content: center; flex-wrap: wrap; }
-  #battleActions button kbd { color: #b99a48; font: 11.5px ui-monospace, monospace; margin-right: 6px; }
-  #battleActions button:disabled { opacity: .4; }
+  #battleRow { display: flex; }
+  #battleMap { display: block; image-rendering: pixelated; max-height: 70vh; width: auto; }
+  #battleInfo {
+    margin: 0; padding: 14px 18px; min-width: 220px; border-left: 6px double #b03a2e;
+    font: 600 17px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; white-space: pre; background: #5c5c5c;
+  }
+  #battleActions {
+    display: flex; gap: 0; justify-content: flex-start; flex-wrap: wrap;
+    background: #5c5c5c; border-top: 6px double #b03a2e; padding: 6px 10px;
+  }
+  #battleActions button {
+    background: none; border: none; border-radius: 0; padding: 4px 12px;
+    font: 700 17px ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; letter-spacing: .04em;
+  }
+  #battleActions button:hover { color: #fff; }
+  #battleActions button kbd { color: #d7d7a0; font: 12px ui-monospace, monospace; margin-right: 6px; }
+  #battleActions button:disabled { color: #8e8e8e; }
   #notes {
     position: absolute; top: 14px; left: 120px; font-size: 12px; color: #8a93a6; max-width: calc(100% - 420px);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -204,7 +217,10 @@
   <canvas id="sprite"></canvas>
   <canvas id="overhead"></canvas>
   <div id="battle">
-    <canvas id="battleMap"></canvas>
+    <div id="battleRow">
+      <canvas id="battleMap"></canvas>
+      <pre id="battleInfo"></pre>
+    </div>
     <div id="battleActions"></div>
   </div>
   <div id="notes"></div>

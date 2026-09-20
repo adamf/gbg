@@ -80,7 +80,9 @@ Plain TypeScript and three.js. Read in this order:
   gear, the levels and the loot.
 - `src/render/` — three.js. `dungeon-scene.ts` builds the geometry, merged per wall graphic;
   `textures.ts` is the pixels-to-surfaces pipeline; `viewer.ts` is the camera, torch and feel.
-- `src/ui/` — the page: folder picker, level list, minimap, event text.
+- `src/ui/` — the page: folder picker, level list, minimap, event text; `battle-view.ts`
+  draws a fight the way the original's combat screen did, oblique walls from the
+  DUNGCOM cobble art and the wilderness scenery outdoors.
 - `vite.config.ts` — in `npm run dev` only, serves the folder named by `GOLDBOX_DATA` at
   `/dev-data/` so the page can load it without the picker. It is not part of the build.
 - `src/cli/` — `inspect` and `dump`, plus a small PNG writer so there is no image dependency.
