@@ -382,6 +382,20 @@ const pageUi: SessionUi = {
     return pageUi.menu(prompt || 'WHO?', members.map((m) => m.character.name), 'vertical')
   },
 
+  files(files) {
+    // One download per file: the browser's own save dialog, nothing leaves the machine.
+    for (const file of files) {
+      const url = URL.createObjectURL(new Blob([file.bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = file.name
+      document.body.append(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    }
+  },
+
   saved() {
     if (!session) return
     try {

@@ -51,8 +51,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   yet found, so they stay plain memory and the party walks the map it is on.
 - **Monsters that shoot and cast** — from the same gear and books the party uses.
 
-Not here yet: the overland map the wilderness scripts count squares on, and writing
-the original's save and character files.
+- **DOS saves** — camp's EXPORT writes SAVGAMB.DAT and CHRDATB1–6 in the original's
+  formats, with the bytes this program does not model carried through from the read.
+
+Not here yet: the overland map the wilderness scripts count squares on.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. Script commands that need
 those run as no-ops and say so in the page's notes line.

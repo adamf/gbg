@@ -30,6 +30,8 @@ import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, 
 import { readyToTrain, train, TRAINING_COST } from './training.js'
 import { ready as readyItem, recompute, unready } from './equipment.js'
 import type { ItemType } from '../formats/items.js'
+import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writer.js'
+import { SAVED_GAME_EXTRA, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH } from '../formats/library.js'
 import { pay } from './treasure.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
@@ -73,6 +75,8 @@ export interface SessionUi {
   who(prompt: string, members: readonly Member[]): Promise<number>
   /** The game was saved to the browser. */
   saved(): void
+  /** Files in the original's formats, for the player to put in their game folder. */
+  files(files: readonly { name: string; bytes: Uint8Array }[]): void
   combat(monsters: readonly MonsterGroup[]): Promise<CombatOutcome>
   parlay(): Promise<number>
   /** Something worth telling a developer, not the player. */
@@ -279,7 +283,7 @@ export class GameSession {
         const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax)
         const choice = await this.ui.menu(
           `CAMP. ${hurt.length === 0 ? 'EVERYONE IS WELL.' : `${hurt.length} NEED REST.`}`,
-          ['REST', 'MEMORISE', 'CAST', 'SAVE GAME', 'LEAVE CAMP'], 'vertical')
+          ['REST', 'MEMORISE', 'CAST', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
         if (choice === 0) {
           if (await this.rest()) return
         } else if (choice === 1) {
@@ -288,6 +292,9 @@ export class GameSession {
           await this.castOutside()
         } else if (choice === 3) {
           this.ui.saved()
+        } else if (choice === 4) {
+          this.ui.files(await this.dosSave('B'))
+          this.ui.print('SAVGAMB.DAT AND THE CHRDATB FILES ARE READY. PUT THEM IN THE GAME FOLDER AND LOAD GAME B.', true)
         } else {
           return
         }
@@ -625,6 +632,46 @@ export class GameSession {
   private async types(): Promise<ItemType[]> {
     if (this.itemTypes.length === 0) this.itemTypes = await this.library.itemTypes()
     return this.itemTypes
+  }
+
+  /**
+   * The game as the original's files: SAVGAM?.DAT with the memory blocks, the script
+   * image and the position, and a .SAV and .ITM per member named for the slot, the
+   * way the shipped J party is.
+   */
+  async dosSave(letter: string): Promise<{ name: string; bytes: Uint8Array }[]> {
+    this.memory.write(POOL_ADDRESSES.lastX, this.party.col)
+    this.memory.write(POOL_ADDRESSES.lastY, this.party.row)
+    this.memory.write(POOL_ADDRESSES.lastEclBlock, this.blockId)
+    const names = await this.names()
+    const { itemDisplayName } = await import('../formats/items.js')
+    const files: { name: string; bytes: Uint8Array }[] = []
+    const party: string[] = []
+    this.roster.members.forEach((member, index) => {
+      const base = `CHRDAT${letter.toUpperCase()}${index + 1}`
+      party.push(base)
+      files.push({ name: `${base}.SAV`, bytes: writeCharacter(member.character) })
+      files.push({ name: `${base}.ITM`, bytes: writeItems(member.items, member.items.map((item) => itemDisplayName(item, names))) })
+    })
+    const cell = this.map && cellAt(this.map, this.party.row, this.party.col)
+    files.unshift({
+      name: `SAVGAM${letter.toUpperCase()}.DAT`,
+      bytes: writeSavedGame({
+        area: this.area,
+        globals: this.memory.bytesOf(POOL_ADDRESSES.globalsBase, SAVED_GAME_GLOBALS / 2),
+        areaScratch: this.memory.bytesOf(POOL_ADDRESSES.areaScratchBase, SAVED_GAME_SCRATCH / 2),
+        extra: this.memory.bytesOf(POOL_ADDRESSES.extraBase, SAVED_GAME_EXTRA / 2),
+        script: this.memory.imageBytes(),
+        position: {
+          col: this.party.col, row: this.party.row, facing: DIRECTIONS.indexOf(this.party.facing),
+          wallAhead: cell ? cell.walls[this.party.facing] : 0,
+          cellEvent: cell ? cell.event | (cell.eventFlag ? 0x80 : 0) : 0,
+        },
+        party,
+      }),
+    })
+    // The original wrote the party's position and last script into the globals too.
+    return files
   }
 
   /** Rolls up a party through the menus, for a new game without the pre-made six. */
@@ -1002,6 +1049,8 @@ export class GameSession {
       partyStrength: () => this.roster.strength(),
       partyMovement: () => this.roster.movement(),
       loadMap: async (id) => {
+        // Outdoors the original loaded no map; the wilderness block stays under the party.
+        if (this.overhead) return
         const ref = await this.library.levelById(id, this.area)
         if (!ref) {
           ui.note(`script asked for map ${id}, which is not in the folder`)

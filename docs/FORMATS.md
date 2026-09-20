@@ -419,6 +419,14 @@ itself reads as the name. `src/engine/roster.ts` answers these.
 
 ---
 
+### Writing them back — `src/formats/save-writer.ts`
+
+Each writer starts from the bytes that were read, where there are any, and patches in
+what this program models, so the fields it does not understand survive. A saved game is
+written as the layout above with the current script image and position, and the party
+named `CHRDAT?1`–`CHRDAT?6` for the slot letter, the way the shipped J party is. Camp's
+EXPORT hands the files to the browser's download dialog; nothing leaves the machine.
+
 ## Identifying the game — `src/formats/detect.ts`
 
 By the config file each release dropped next to its data, which survives patching better than

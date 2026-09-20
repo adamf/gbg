@@ -45,6 +45,7 @@ const ui: SessionUi = {
   battleTurn: async () => 'done',
   battleEnd: () => {},
   saved: () => {},
+  files: () => {},
   note: (message) => { notes.push(message) },
 }
 

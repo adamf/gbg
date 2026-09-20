@@ -82,6 +82,8 @@ export interface Character {
   memorised: number[]
   /** What was chosen at camp, refilled by a rest. */
   prepared: number[]
+  /** The record as read, so a write-back keeps the bytes this reader does not model. */
+  raw?: number[]
 }
 
 export interface Item {
@@ -98,6 +100,7 @@ export interface Item {
   count: number
   value: number
   affects: number[]
+  raw?: number[]
 }
 
 function pstring(data: Uint8Array, at: number, max: number): string {
@@ -167,6 +170,7 @@ export function readCharacter(data: Uint8Array): Character {
     spellSlots,
     memorised: [],
     prepared: [],
+    raw: [...data.subarray(0, CHARACTER_RECORD_SIZE)],
   }
 }
 
@@ -195,6 +199,7 @@ export function readItems(data: Uint8Array): Item[] {
       count: u8(data, at + 0x39),
       value: i16(data, at + 0x3a),
       affects: [u8(data, at + 0x3c), u8(data, at + 0x3d), u8(data, at + 0x3e)],
+      raw: [...data.subarray(at, at + ITEM_RECORD_SIZE)],
     })
   }
   return items

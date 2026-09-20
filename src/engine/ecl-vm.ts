@@ -225,6 +225,22 @@ export class EclMemory {
     for (const [address, text] of saved.strings) this.strings.set(address, text)
   }
 
+  /** A run of words as the original's bytes, two per address, for writing a save. */
+  bytesOf(firstAddress: number, count: number): Uint8Array {
+    const out = new Uint8Array(count * 2)
+    for (let i = 0; i < count; i++) {
+      const word = this.words[(firstAddress + i) & 0xffff]!
+      out[i * 2] = word & 0xff
+      out[i * 2 + 1] = (word >> 8) & 0xff
+    }
+    return out
+  }
+
+  /** The script image as loaded, for the save's copy of it. */
+  imageBytes(): Uint8Array {
+    return this.image
+  }
+
   /** Zeroes a range of words, the way the original reset its scratch on a fresh script. */
   clearWords(from: number, to: number): void {
     for (let a = from; a < to; a++) this.words[a & 0xffff] = 0
