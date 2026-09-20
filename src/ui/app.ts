@@ -255,7 +255,7 @@ const pageUi: SessionUi = {
         ['n', c.name],
         ['r', `${className(c).split('/').map((part) => part.slice(0, 2).toUpperCase()).join('/')} ${characterLevel(c)}`],
         ['r hp', c.status === 'okay' ? `${c.hpCurrent}/${c.hpMax}` : c.status.toUpperCase()],
-        ['r', `AC ${c.ac}`],
+        ['r', c.memorised.length > 0 ? `${c.memorised.length}✦ AC ${c.ac}` : `AC ${c.ac}`],
       ]
       for (const [cls, text] of cells) {
         const cell = document.createElement('td')
@@ -384,7 +384,8 @@ function refreshHud(state: PartyState): void {
 
   if (session) {
     const { hour, minute } = session.time
-    clockLine.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+    const gold = session.roster.members.reduce((n, m) => n + (m.character.money[3] ?? 0), 0)
+    clockLine.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}${session.searching ? ' · SEARCHING' : ''} · ${gold} gold`
   }
 }
 
@@ -433,6 +434,19 @@ window.addEventListener('keydown', (event) => {
       const next = await pageUi.menu(undefined, ['EQUIP', 'DONE'], 'horizontal')
       if (next === 0) await current.equip(index)
     })
+    return
+  }
+
+  if (event.code === 'KeyF' && session && !session.busy) {
+    event.preventDefault()
+    session.toggleSearch()
+    refreshHud(session.party)
+    return
+  }
+
+  if (event.code === 'KeyL' && session && !session.busy) {
+    event.preventDefault()
+    void session.look()
     return
   }
 

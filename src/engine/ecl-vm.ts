@@ -70,6 +70,8 @@ export const POOL_ADDRESSES = {
   enterShop: 0x6e6c,
   /** Which classes the hall the party stands in trains; PROGRAM 0 then offers training. */
   trainingMask: 0x6da8,
+  /** Bit 0: the party is searching as it walks; bit 1: it is looking at this square. */
+  searchFlags: 0x6dca,
   /** The per-area scratch words the scripts use as local variables. */
   localsStart: 0x6e79,
   localsEnd: 0x6e90,

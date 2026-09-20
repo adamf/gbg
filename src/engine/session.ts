@@ -306,6 +306,25 @@ export class GameSession {
     return false
   }
 
+  get searching(): boolean {
+    return (this.memory.read(POOL_ADDRESSES.searchFlags) & 1) !== 0
+  }
+
+  /** Searching: slower going, and the scripts show what a careful party finds. */
+  toggleSearch(): void {
+    const flags = this.memory.read(POOL_ADDRESSES.searchFlags)
+    this.memory.write(POOL_ADDRESSES.searchFlags, flags ^ 1)
+  }
+
+  /** Looking: the square's script runs again with the looking bit set. */
+  async look(): Promise<void> {
+    if (this.running || !this.program) return
+    const flags = this.memory.read(POOL_ADDRESSES.searchFlags)
+    this.memory.write(POOL_ADDRESSES.searchFlags, flags | 2)
+    await this.withScript(() => this.afterStep())
+    this.memory.write(POOL_ADDRESSES.searchFlags, this.memory.read(POOL_ADDRESSES.searchFlags) & ~2)
+  }
+
   /** A movement key. Turns are free; steps run the script when they land. */
   async move(command: MoveCommand): Promise<boolean> {
     if (this.running || !this.map) return false
@@ -335,7 +354,7 @@ export class GameSession {
     }
 
     this.party = result.state
-    this.advanceTime(1)
+    this.advanceTime(this.searching ? 10 : 1)
     await this.withScript(() => this.afterStep())
     return true
   }
