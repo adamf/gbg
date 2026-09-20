@@ -175,8 +175,8 @@ export class GameLibrary {
   }
 
   /** The wall graphics for a set of WALLDEF block ids, as a LOAD PIECES names them. */
-  async wallSetFromIds(ids: readonly number[]): Promise<WallSet> {
-    const blocks = await this.locateWallDefBlocks(ids.filter((id) => id !== 0xff))
+  async wallSetFromIds(ids: readonly number[], area?: number): Promise<WallSet> {
+    const blocks = await this.locateWallDefBlocks(ids.filter((id) => id !== 0xff), area)
 
     const textures: Rgba[] = []
     const sources: WallSet['sources'] = []
@@ -260,10 +260,15 @@ export class GameLibrary {
   }
 
   /** Finds which WALLDEF file holds each requested block id. */
-  private async locateWallDefBlocks(ids: readonly number[]): Promise<{ file: string; blockId: number }[]> {
+  private async locateWallDefBlocks(ids: readonly number[], area?: number): Promise<{ file: string; blockId: number }[]> {
     const found: { file: string; blockId: number }[] = []
+    const files = this.wallDefFiles()
+    if (area !== undefined) {
+      const own = `WALLDEF${area}.DAX`
+      files.sort((a, b) => (a === own ? -1 : b === own ? 1 : 0))
+    }
     for (const id of ids) {
-      for (const file of this.wallDefFiles()) {
+      for (const file of files) {
         const archive = await this.archive(file)
         if (archive?.blocks.some((b) => b.id === id)) {
           found.push({ file, blockId: id })

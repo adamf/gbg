@@ -14,7 +14,7 @@ import { canWalk, cellAt, DIRECTIONS, type Direction, type GeoMap } from '../for
 import type { GameLibrary, LevelRef, SavedGame } from '../formats/library.js'
 import { startingCell, startingFacing } from './dungeon.js'
 import {
-  EclMemory, EclVm, POOL_ADDRESSES,
+  CALL_DUEL, CALL_QUIET, CALL_REDRAW, CALL_SOUND, CALL_STEP_FORWARD, EclMemory, EclVm, POOL_ADDRESSES,
   type CombatOutcome, type EclHost, type EncounterView, type MonsterGroup, type VmWorld,
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
@@ -87,6 +87,8 @@ export class GameSession {
   private levelDirty = false
   private positionSetByScript = false
   private running = false
+  /** Set by a duel CALL: the next fight is this member alone. */
+  private champion: Member | undefined
 
   constructor(private readonly library: GameLibrary, private readonly ui: SessionUi) {
     this.memory.world = this.world()
@@ -333,17 +335,21 @@ export class GameSession {
 
   /** After a script has run: rebuild the level if it changed, and show where the party is. */
   private settle(): void {
-    if (this.levelDirty && this.map) {
-      if (!this.positionSetByScript) {
-        const cell = startingCell(this.map)
-        this.party = { row: cell.row, col: cell.col, facing: startingFacing(this.map, cell) }
-      }
-      this.ui.showLevel(this.map, this.textures, this.mapRef?.name ?? `Map ${this.map.id}`)
-      this.levelDirty = false
-    }
+    if (this.levelDirty) this.showLevelNow()
     this.positionSetByScript = false
     this.ui.showParty(this.party)
     this.ui.party(this.roster.members, this.roster.selected)
+  }
+
+  private showLevelNow(): void {
+    if (!this.map) return
+    if (!this.positionSetByScript) {
+      const cell = startingCell(this.map)
+      this.party = { row: cell.row, col: cell.col, facing: startingFacing(this.map, cell) }
+    }
+    this.ui.showLevel(this.map, this.textures, this.mapRef?.name ?? `Map ${this.map.id}`)
+    this.ui.showParty(this.party)
+    this.levelDirty = false
   }
 
   // ---- combat ------------------------------------------------------------------
@@ -370,7 +376,9 @@ export class GameSession {
     }
     if (loaded.length === 0) return this.ui.combat(groups)
 
-    const party = this.roster.members.map((member) => ({ member, label: member.character.name }))
+    const fighters = this.champion ? [this.champion] : this.roster.members
+    this.champion = undefined
+    const party = fighters.map((member) => ({ member, label: member.character.name }))
     const combat = new Combat(party, labelMonsters(loaded), (max) => Math.floor(Math.random() * (max + 1)))
     const random = (max: number) => Math.floor(Math.random() * (max + 1))
 
@@ -471,10 +479,12 @@ export class GameSession {
       setPosition(row, col) {
         session.party = { ...session.party, row: row & 0x0f, col: col & 0x0f }
         session.positionSetByScript = true
+        session.ui.showParty(session.party)
       },
       setFacing(facing) {
         session.party = { ...session.party, facing: DIRECTIONS[facing & 3] as Direction }
         session.positionSetByScript = true
+        session.ui.showParty(session.party)
       },
       wallAhead() {
         const cell = session.map && cellAt(session.map, session.party.row, session.party.col)
@@ -501,6 +511,7 @@ export class GameSession {
         if (result.moved) {
           session.party = result.state
           session.positionSetByScript = true
+          session.ui.showParty(session.party)
         }
       },
     }
@@ -545,11 +556,27 @@ export class GameSession {
         this.levelDirty = true
       },
       loadWallSets: async (ids) => {
-        this.textures = (await this.library.wallSetFromIds(ids)).textures
+        // 127 was the original's way of saying "block 0 of this area's file".
+        const wanted = ids.map((id) => (id === 0x7f ? 0 : id))
+        this.textures = (await this.library.wallSetFromIds(wanted, this.area)).textures
         this.levelDirty = true
+        // Show the level now rather than when the script finishes: it may be about
+        // to talk for a while, and the player should see where they are.
+        this.showLevelNow()
       },
-      call: (id) => {
-        if (id !== 0xc01e) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
+      call: async (id) => {
+        switch (id) {
+          case CALL_STEP_FORWARD: return
+          case CALL_REDRAW: ui.showParty(this.party); return
+          case CALL_SOUND: return
+          case CALL_DUEL: {
+            const index = await ui.who('WHO WILL FIGHT?', this.roster.members)
+            this.champion = this.roster.members[index]
+            return
+          }
+          default:
+            if (!CALL_QUIET.has(id)) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
+        }
       },
       program: (id) => {
         const names: Record<number, string> = { 0: 'the start menu', 3: 'the party has been killed', 8: 'the game is won', 9: 'the party makes camp' }

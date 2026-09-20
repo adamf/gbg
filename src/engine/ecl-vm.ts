@@ -310,8 +310,19 @@ export interface RunResult {
   program?: number
 }
 
-/** The address the CALL command uses to step the party forward. */
+/**
+ * CALL targets: addresses in the original's own code. The scripts use a handful.
+ * Pool of Radiance's, read off the scripts rather than the binary: 0xc01e walks the
+ * party one square forward (the same in Curse); 0x2c90 redraws the view after the
+ * script moved the party; 0xba03 plays the sound whose number was saved at 0x03de.
+ */
 export const CALL_STEP_FORWARD = 0xc01e
+export const CALL_REDRAW = 0x2c90
+export const CALL_SOUND = 0xba03
+/** The next COMBAT is a duel: one party member against one foe. */
+export const CALL_DUEL = 0x8001
+/** Wilderness-map bookkeeping and picture-area helpers with nothing to do here. */
+export const CALL_QUIET = new Set([0x0806, 0x2c51, 0x2c4e, 0xc009, 0xc018, 0xc01b, 0xc003])
 
 const MAX_STEPS = 200_000
 

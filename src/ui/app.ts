@@ -274,6 +274,7 @@ const pageUi: SessionUi = {
     if (!session) return
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(session.snapshot()))
+      continueButton.hidden = false
       pageUi.print('THE GAME IS SAVED IN THIS BROWSER.', true)
     } catch (error) {
       pageUi.print('THE GAME COULD NOT BE SAVED HERE.', true)
@@ -387,6 +388,7 @@ function refreshHud(state: PartyState): void {
 function leaveLevel(): void {
   viewer?.stop()
   session = undefined
+  continueButton.hidden = storedSnapshot() === undefined
   playScreen.style.display = 'none'
   startScreen.style.display = 'grid'
 }
