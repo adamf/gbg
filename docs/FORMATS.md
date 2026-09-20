@@ -391,6 +391,18 @@ per round and range.
 Shops are scripts: TREASURE with an item block loads that block of the area's
 `ITEM*.DAX` onto the ground, and a COMBAT with the shop word set sells from it.
 
+### Spells — `src/formats/spells.ts`
+
+Spell names are inline in `START.EXE` too, one-based from "Bless" (the "Bless" that is
+followed by "Curse"): eight first-level prayers, thirteen first-level magic-user
+spells, then the second and third levels of each. A character's 56-byte spell book at
+0x33 has a 1 per known spell by that numbering, and the six bytes at 0xB2 are spell
+slots per level, three cleric levels then three magic-user levels — a level 1 cleric
+with 17 wisdom shows 3, which is the bonus the rules give. What is memorised is not
+stored in the shipped records (nobody has memorised yet), so the interpreter keeps
+its own list. `SPELLS` says what the early spells do; the rest can be memorised and
+cast for no effect.
+
 ### The selected character in script memory
 
 `LOAD CHARACTER n` and `WHO` pick a party member, and the scripts then read them at

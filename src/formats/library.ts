@@ -12,6 +12,7 @@ import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSumm
 import { blankRgba, type Rgba } from './ega.js'
 import { readCharacter, readItems, type Character, type Item } from './character.js'
 import { readItemNames, readItemTypes, type ItemType } from './items.js'
+import { readSpellNames } from './spells.js'
 import { detectGame, mapName, type GameInfo } from './detect.js'
 import { readGeoMap, type GeoMap } from './geo.js'
 import { decodeAnyImage, decodeImageBlock, isImageBlock, type DecodedImage } from './image.js'
@@ -114,6 +115,7 @@ export class GameLibrary {
   private readonly wallSetCache = new Map<string, Promise<Rgba[]>>()
   private readonly eclCache = new Map<string, Promise<EclProgram[]>>()
   private names: Promise<string[]> | undefined
+  private spellNameList: Promise<string[]> | undefined
   private types: Promise<ItemType[]> | undefined
   readonly game: GameInfo
 
@@ -351,6 +353,12 @@ export class GameLibrary {
   itemNames(): Promise<string[]> {
     this.names ??= this.source.read('START.EXE').then((exe) => (exe ? readItemNames(exe) : []))
     return this.names
+  }
+
+  /** The spell name list, scanned from START.EXE; empty when the folder lacks it. */
+  spellNames(): Promise<string[]> {
+    this.spellNameList ??= this.source.read('START.EXE').then((exe) => (exe ? readSpellNames(exe) : []))
+    return this.spellNameList
   }
 
   /** The item type table from ITEMS. */

@@ -31,6 +31,8 @@ export const SAVING_THROWS = ['paralysis/poison/death', 'petrification/polymorph
 export const COINS = ['copper', 'silver', 'electrum', 'gold', 'platinum', 'gems', 'jewellery'] as const
 
 export type Status = 'okay' | 'animated' | 'temporarily gone' | 'running' | 'unconscious' | 'dying' | 'dead' | 'stoned' | 'gone'
+  // Not in the file: what a spell did to someone in a fight.
+  | 'asleep' | 'held'
 const STATUSES: Status[] = ['okay', 'animated', 'temporarily gone', 'running', 'unconscious', 'dying', 'dead', 'stoned', 'gone']
 
 export interface Character {
@@ -69,6 +71,14 @@ export interface Character {
   attacks: { count: number; dice: number; sides: number; bonus: number }
   iconColours: number[]
   iconSize: number
+  /** Spell ids the character knows. */
+  spellbook: number[]
+  /** Spell slots per level: three cleric, then three magic-user. */
+  spellSlots: number[]
+  /** Spell ids memorised and ready to cast, in slot order. */
+  memorised: number[]
+  /** What was chosen at camp, refilled by a rest. */
+  prepared: number[]
 }
 
 export interface Item {
@@ -114,6 +124,10 @@ export function readCharacter(data: Uint8Array): Character {
   for (let i = 0; i < 7; i++) money.push(i16(data, 0x88 + i * 2))
   const iconColours: number[] = []
   for (let i = 0; i < 6; i++) iconColours.push(u8(data, 0xc1 + i))
+  const spellbook: number[] = []
+  for (let i = 0; i < 56; i++) if (u8(data, 0x33 + i) !== 0) spellbook.push(i + 1)
+  const spellSlots: number[] = []
+  for (let i = 0; i < 6; i++) spellSlots.push(u8(data, 0xb2 + i))
 
   const statusByte = u8(data, 0x10c)
   return {
@@ -145,6 +159,10 @@ export function readCharacter(data: Uint8Array): Character {
     attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: u8(data, 0x119) },
     iconColours,
     iconSize: u8(data, 0xc7),
+    spellbook,
+    spellSlots,
+    memorised: [],
+    prepared: [],
   }
 }
 

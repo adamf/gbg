@@ -20,9 +20,12 @@ import {
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
 import { Roster, type Member } from './roster.js'
 import { characterLevel, className, raceName, type Character, type Item } from '../formats/character.js'
+export type { Spell }
 import { Combat, labelMonsters, type Combatant } from './combat.js'
 import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
+import { spellById, type Spell } from '../formats/spells.js'
+import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -45,7 +48,7 @@ export interface SessionUi {
    * A round of combat has been resolved; shows the lines and asks whether to keep
    * fighting. Returns false to run.
    */
-  combatRound(round: number, lines: readonly string[], party: readonly Combatant[], monsters: readonly Combatant[]): Promise<boolean>
+  combatRound(round: number, lines: readonly string[], party: readonly Combatant[], monsters: readonly Combatant[]): Promise<'fight' | 'cast' | 'run'>
   /** The party changed: someone was hurt, paid, or picked. */
   party(members: readonly Member[], selected: number): void
   /** Picks a party member by index. */
@@ -119,6 +122,7 @@ export class GameSession {
   async resume(saved: SavedGame): Promise<void> {
     this.restore(saved)
     this.roster.members = await this.library.party(saved)
+    for (const { character } of this.roster.members) if (canCast(character) && character.prepared.length === 0) autoPrepare(character)
     this.ui.party(this.roster.members, this.roster.selected)
     const blockId = this.memory.read(POOL_ADDRESSES.lastEclBlock)
     const ref = await this.library.levelById(blockId, this.area)
@@ -218,10 +222,14 @@ export class GameSession {
         const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax)
         const choice = await this.ui.menu(
           `CAMP. ${hurt.length === 0 ? 'EVERYONE IS WELL.' : `${hurt.length} NEED REST.`}`,
-          ['REST', 'SAVE GAME', 'LEAVE CAMP'], 'vertical')
+          ['REST', 'MEMORISE', 'CAST', 'SAVE GAME', 'LEAVE CAMP'], 'vertical')
         if (choice === 0) {
           if (await this.rest()) return
         } else if (choice === 1) {
+          await this.memoriseMenu()
+        } else if (choice === 2) {
+          await this.castOutside()
+        } else if (choice === 3) {
           this.ui.saved()
         } else {
           return
@@ -248,8 +256,9 @@ export class GameSession {
         character.statusByte = 0
       }
       if (character.status === 'okay' && character.hpCurrent < character.hpMax) character.hpCurrent++
+      refresh(character)
     }
-    this.ui.print('THE PARTY RESTS.', true)
+    this.ui.print('THE PARTY RESTS. SPELLS ARE MEMORISED.', true)
     this.ui.party(this.roster.members, this.roster.selected)
     return false
   }
@@ -416,26 +425,32 @@ export class GameSession {
     const random = (max: number) => Math.floor(Math.random() * (max + 1))
 
     let outcome: CombatOutcome = 'won'
+    let lines: string[] = [`${combat.monsters.length} FOE${combat.monsters.length === 1 ? '' : 'S'}: ${[...new Set(combat.monsters.map((m) => m.member.character.name))].join(', ')}.`]
     while (!combat.over) {
-      const lines = combat.next()
       this.ui.party(this.roster.members, this.roster.selected)
-      if (combat.over) {
-        await this.ui.combatRound(combat.round, lines, combat.party, combat.monsters)
-        break
+      const choice = await this.ui.combatRound(combat.round, lines, combat.party, combat.monsters)
+      if (choice === 'cast') {
+        lines = await this.castInCombat(combat)
+        continue
       }
-      const keepFighting = await this.ui.combatRound(combat.round, lines, combat.party, combat.monsters)
-      if (!keepFighting) {
+      if (choice === 'run') {
         // Running works when the party is quicker than what is chasing it.
         const chase = Math.max(...combat.monstersStanding.map((m) => m.member.character.movement))
         if (this.roster.movement().min + random(5) >= chase) {
           outcome = 'fled'
           break
         }
-        this.ui.print('THE PARTY CANNOT GET AWAY!', true)
+        lines = ['THE PARTY CANNOT GET AWAY!']
       }
+      lines = combat.next()
     }
+    if (combat.over) {
+      this.ui.party(this.roster.members, this.roster.selected)
+      await this.ui.combatRound(combat.round, lines, combat.party, combat.monsters)
+    }
+    combat.finish()
 
-    if (outcome !== 'fled') outcome = combat.partyStanding.length > 0 ? 'won' : 'lost'
+    if (outcome !== 'fled') outcome = combat.party.some((c) => c.member.character.status === 'okay') ? 'won' : 'lost'
     if (outcome === 'won') {
       const experience = combat.experience()
       const standing = this.roster.active
@@ -526,7 +541,118 @@ export class GameSession {
       `${describeCoins(c.money) || 'NO COINS'}`,
       ...member.items.map((item) => `${item.readied ? '* ' : '  '}${itemDisplayName(item, names)}`),
     ]
+    if (canCast(c)) {
+      const spells = await Promise.all(c.memorised.map((id) => this.spellName(id)))
+      lines.push(`SPELLS: ${spells.length > 0 ? spells.join(', ').toUpperCase() : 'NONE MEMORISED'}`)
+    }
     return lines.join('\n')
+  }
+
+  private spellNames: string[] = []
+
+  private async spellName(id: number): Promise<string> {
+    if (this.spellNames.length === 0) this.spellNames = await this.library.spellNames()
+    return this.spellNames[id] ?? spellById(id)?.name ?? `SPELL ${id}`
+  }
+
+  /** Camp: choose what each caster will have after a rest. */
+  private async memoriseMenu(): Promise<void> {
+    const casters = this.roster.members.filter((m) => canCast(m.character))
+    if (casters.length === 0) {
+      this.ui.print('NOBODY HERE CASTS SPELLS.', true)
+      return
+    }
+    const who = await this.ui.menu('MEMORISE FOR:', [...casters.map((m) => m.character.name), 'DONE'], 'vertical')
+    const member = casters[who]
+    if (!member) return
+    const c = member.character
+    const how = await this.ui.menu(`${c.name}: ${c.prepared.length} PREPARED.`, ['CHOOSE EACH', 'AUTOMATIC', 'BACK'], 'horizontal')
+    if (how === 1) {
+      autoPrepare(c)
+      this.ui.print(`${c.name} PREPARES ${(await Promise.all(c.prepared.map((id) => this.spellName(id)))).join(', ').toUpperCase()}.`, true)
+      return
+    }
+    if (how !== 0) return
+    const chosen: number[] = []
+    for (const casterClass of ['cleric', 'magic-user'] as const) {
+      const perLevel = slots(c, casterClass)
+      for (let level = 1; level <= perLevel.length; level++) {
+        const known = knownAt(c, casterClass, level)
+        for (let slot = 0; slot < (perLevel[level - 1] ?? 0) && known.length > 0; slot++) {
+          const names = await Promise.all(known.map((id) => this.spellName(id)))
+          const pick = await this.ui.menu(`${casterClass.toUpperCase()} LEVEL ${level}, SLOT ${slot + 1}:`, [...names, 'LEAVE EMPTY'], 'vertical')
+          if (pick < known.length) chosen.push(known[pick]!)
+        }
+      }
+    }
+    memorise(c, chosen)
+    this.ui.print(`${c.name} WILL MEMORISE ${chosen.length} SPELL${chosen.length === 1 ? '' : 'S'} ON RESTING.`, true)
+  }
+
+  /** Camp: cast something that works outside a fight, a cure mostly. */
+  private async castOutside(): Promise<void> {
+    const casters = this.roster.members.filter((m) => ready(m.character).some((s) => s.anytime))
+    if (casters.length === 0) {
+      this.ui.print('NOBODY HAS A SPELL READY THAT HELPS HERE.', true)
+      return
+    }
+    const who = await this.ui.menu('WHO CASTS?', [...casters.map((m) => m.character.name), 'NOBODY'], 'vertical')
+    const member = casters[who]
+    if (!member) return
+    const usable = ready(member.character).filter((s) => s.anytime)
+    const pick = await this.ui.menu('CAST:', [...usable.map((s) => s.name.toUpperCase()), 'NOTHING'], 'vertical')
+    const spell = usable[pick]
+    if (!spell) return
+    const target = await this.ui.who('ON WHOM?', this.roster.members)
+    const onto = this.roster.members[target]
+    if (!onto) return
+    forget(member.character, spell.id)
+    const { lines } = cast(spell, member.character, [onto.character], (max) => Math.floor(Math.random() * (max + 1)))
+    this.ui.print(lines.join('\n'), true)
+    this.ui.party(this.roster.members, this.roster.selected)
+  }
+
+  /** A round's casting: any caster with something ready may use it before blows fall. */
+  private async castInCombat(combat: Combat): Promise<string[]> {
+    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const casters = combat.party.filter((c) => c.member.character.status === 'okay' && !combat.acted.has(c.member.character) && ready(c.member.character).length > 0)
+    if (casters.length === 0) return ['NOBODY HAS A SPELL READY.']
+    const who = await this.ui.menu('WHO CASTS?', [...casters.map((c) => c.label), 'NOBODY'], 'vertical')
+    const caster = casters[who]
+    if (!caster) return []
+    const usable = ready(caster.member.character)
+    const pick = await this.ui.menu('CAST:', [...usable.map((s) => s.name.toUpperCase()), 'NOTHING'], 'vertical')
+    const spell = usable[pick]
+    if (!spell) return []
+
+    let targets: Character[] = []
+    switch (spell.target) {
+      case 'self': targets = [caster.member.character]; break
+      case 'party': targets = combat.party.map((c) => c.member.character); break
+      case 'ally': {
+        const at = await this.ui.menu('ON WHOM?', [...combat.party.map((c) => c.label), 'NOBODY'], 'vertical')
+        const ally = combat.party[at]
+        if (!ally) return []
+        targets = [ally.member.character]
+        break
+      }
+      case 'foe': {
+        const foes = combat.monstersStanding
+        const at = await this.ui.menu('AT WHOM?', [...foes.map((c) => c.label), 'NOBODY'], 'vertical')
+        const foe = foes[at]
+        if (!foe) return []
+        targets = [foe.member.character]
+        break
+      }
+      case 'foes':
+        targets = combat.monstersStanding.slice(0, spell.effect.count ?? 99).map((c) => c.member.character)
+        break
+    }
+    forget(caster.member.character, spell.id)
+    combat.acted.add(caster.member.character)
+    const { lines } = cast(spell, caster.member.character, targets, random, combat)
+    this.ui.party(this.roster.members, this.roster.selected)
+    return lines
   }
 
   /** A temple heals the wounded for gold, one hit point a coin, the way clerics charge. */

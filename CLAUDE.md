@@ -32,12 +32,16 @@ one server-side, or check a `.DAX` into git is the wrong change.
   camping that heals and can be interrupted by the level's own encounter odds, a temple
   that heals for gold, and a save in the browser's storage with a Continue button.
 
+- **Spells** — memorised at camp against the book and the slots, refilled by rest,
+  cast in a fight or on the road: cures, sleep, magic missile, hold, bless, shield,
+  fireball and lightning. Sleepers and the held are auto-hit for double.
 - **Treasure and shops** — what TREASURE leaves on the ground can be shared and taken,
   shops buy and sell, and items carry the names the game printed, scanned from
   START.EXE. V shows a character sheet.
 
-Not here yet, in roughly the order they are needed: the tactical combat grid, spells,
-training, the city overview map, and writing the original's save files. Script commands that need
+Not here yet, in roughly the order they are needed: the tactical combat grid, training
+and levelling, the rest of the spell list, the city overview map, and writing the
+original's save files. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together

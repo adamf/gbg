@@ -221,16 +221,19 @@ const pageUi: SessionUi = {
     return chosen === 0 ? 'won' : 'fled'
   },
 
-  async combatRound(round, lines, _party, monsters: readonly Combatant[]) {
-    const standing = monsters.filter((m) => m.member.character.status === 'okay')
-    const summary = standing.length === 0 ? 'THE ENEMY IS DEFEATED.' : `${standing.length} FOE${standing.length === 1 ? '' : 'S'} STILL STAND.`
-    pageUi.print(`ROUND ${round}\n${lines.join('\n')}\n${summary}`, true)
-    if (standing.length === 0 || _party.every((p) => p.member.character.status !== 'okay')) {
+  async combatRound(round, lines, party, monsters: readonly Combatant[]) {
+    const standing = monsters.filter((m) => ['okay', 'asleep', 'held'].includes(m.member.character.status) && m.member.character.hpCurrent > 0)
+    const helpless = standing.filter((m) => m.member.character.status !== 'okay').length
+    const summary = standing.length === 0
+      ? 'THE ENEMY IS DEFEATED.'
+      : `${standing.length} FOE${standing.length === 1 ? ' STILL STANDS' : 'S STILL STAND'}${helpless > 0 ? `, ${helpless} HELPLESS` : ''}.`
+    pageUi.print(`${round > 0 ? `ROUND ${round}\n` : ''}${lines.join('\n')}\n${summary}`, true)
+    if (standing.length === 0 || party.every((p) => p.member.character.status !== 'okay')) {
       await pageUi.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
-      return false
+      return 'fight'
     }
-    const chosen = await pageUi.menu(undefined, ['FIGHT ON', 'RUN'], 'horizontal')
-    return chosen === 0
+    const chosen = await pageUi.menu(undefined, ['FIGHT', 'CAST', 'RUN'], 'horizontal')
+    return (['fight', 'cast', 'run'] as const)[chosen] ?? 'fight'
   },
 
   parlay() {
