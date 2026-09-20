@@ -61,6 +61,8 @@ export class Combat {
   readonly log: string[] = []
   /** To-hit bonus the party carries for the fight, from a blessing. */
   private partyHitBonus = 0
+  /** To-hit penalty on the monsters, from a curse. */
+  private monsterHitPenalty = 0
   /** Armour class bonus by character, from shields and protections. */
   private readonly acBonus = new Map<Character, number>()
   /** Who has already acted this round — casters, mostly. */
@@ -86,6 +88,20 @@ export class Combat {
 
   bless(bonus: number): void {
     this.partyHitBonus += bonus
+  }
+
+  curse(penalty: number): void {
+    this.monsterHitPenalty += penalty
+  }
+
+  /** What a side adds to its d20, from blessings and curses. */
+  hitModifier(ours: boolean): number {
+    return ours ? this.partyHitBonus : -this.monsterHitPenalty
+  }
+
+  /** A character's armour class as it stands in this fight, protections counted. */
+  acOf(character: Character): number {
+    return character.ac - (this.acBonus.get(character) ?? 0)
   }
 
   shield(character: Character, bonus: number): void {
@@ -119,8 +135,8 @@ export class Combat {
       const target = (easy.length > 0 ? easy : foes)[this.random((easy.length > 0 ? easy : foes).length - 1)]!
       const attacks = Math.max(1, Math.round(attacker.member.character.attacks.count / 2))
       for (let i = 0; i < attacks && standing(target); i++) {
-        const roll = this.random(19) + 1 + (ours ? this.partyHitBonus : 0)
-        const defender = { ...target.member.character, ac: target.member.character.ac - (this.acBonus.get(target.member.character) ?? 0) }
+        const roll = this.random(19) + 1 + this.hitModifier(ours)
+        const defender = { ...target.member.character, ac: this.acOf(target.member.character) }
         if (!helpless(target) && !hits(attacker.member.character, defender, roll)) {
           lines.push(`${attacker.label} MISSES ${target.label}.`)
           continue

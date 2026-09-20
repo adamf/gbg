@@ -224,9 +224,10 @@ export class Battle {
     const defender = target.combatant.member.character
     const helpless = defender.status === 'asleep' || defender.status === 'held'
     const attacks = Math.max(1, Math.round(attacker.attacks.count / 2))
+    const ours = f.side === 'party'
     for (let i = 0; i < attacks && standing(defender); i++) {
-      const roll = this.random(19) + 1
-      if (!helpless && !hits(attacker, defender, roll)) {
+      const roll = this.random(19) + 1 + this.combat.hitModifier(ours)
+      if (!helpless && !hits(attacker, { ...defender, ac: this.combat.acOf(defender) }, roll)) {
         lines.push(`${f.combatant.label} MISSES ${target.combatant.label}.`)
         continue
       }

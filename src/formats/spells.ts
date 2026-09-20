@@ -59,7 +59,7 @@ export type CasterClass = 'cleric' | 'magic-user'
 export type SpellTarget = 'self' | 'ally' | 'party' | 'foe' | 'foes'
 
 export interface SpellEffect {
-  kind: 'heal' | 'harm' | 'damage' | 'sleep' | 'hold' | 'bless' | 'shield' | 'none'
+  kind: 'heal' | 'harm' | 'damage' | 'sleep' | 'hold' | 'bless' | 'curse' | 'shield' | 'none'
   dice?: number
   sides?: number
   bonus?: number
@@ -99,13 +99,43 @@ export const SPELLS: readonly Spell[] = [
   { id: 23, name: 'Hold Person', class: 'cleric', level: 2, target: 'foes', effect: { kind: 'hold', count: 3 } },
   { id: 28, name: 'Spiritual Hammer', class: 'cleric', level: 2, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 6, bonus: 1 } },
   { id: 34, name: 'Stinking Cloud', class: 'magic-user', level: 2, target: 'foes', effect: { kind: 'hold', count: 4 } },
-  { id: 45, name: 'Fireball', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 6 } },
+  { id: 2, name: 'Curse', class: 'cleric', level: 1, target: 'foes', effect: { kind: 'curse', bonus: 1 } },
+  { id: 10, name: 'Charm Person', class: 'magic-user', level: 1, target: 'foes', effect: { kind: 'hold', count: 1 } },
+  { id: 30, name: 'Invisibility', class: 'magic-user', level: 2, target: 'self', effect: { kind: 'shield', bonus: 4 } },
+  { id: 32, name: 'Mirror Image', class: 'magic-user', level: 2, target: 'self', effect: { kind: 'shield', bonus: 2 } },
+  { id: 42, name: 'Prayer', class: 'cleric', level: 3, target: 'party', effect: { kind: 'bless', bonus: 1 } },
+  { id: 45, name: 'Blink', class: 'magic-user', level: 3, target: 'self', effect: { kind: 'shield', bonus: 2 } },
+  { id: 47, name: 'Fireball', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 6 } },
+  { id: 50, name: "Invisibility, 10' Radius", class: 'magic-user', level: 3, target: 'party', effect: { kind: 'shield', bonus: 2 } },
   { id: 49, name: 'Hold Person', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'hold', count: 4 } },
   { id: 51, name: 'Lightning Bolt', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 3 } },
 ]
 
+/** Every spell's name by the game's number, so the ones without an effect still have one. */
+export const SPELL_NAMES: readonly string[] = [
+  '', 'Bless', 'Curse', 'Cure Light Wounds', 'Cause Light Wounds', 'Detect Magic', 'Protection From Evil',
+  'Protection From Good', 'Resist Cold', 'Burning Hands', 'Charm Person', 'Detect Magic', 'Enlarge', 'Reduce',
+  'Friends', 'Magic Missile', 'Protection From Evil', 'Protection From Good', 'Read Magic', 'Shield',
+  'Shocking Grasp', 'Sleep', 'Find Traps', 'Hold Person', 'Resist Fire', "Silence, 15' Radius", 'Slow Poison',
+  'Snake Charm', 'Spiritual Hammer', 'Detect Invisibility', 'Invisibility', 'Knock', 'Mirror Image',
+  'Ray of Enfeeblement', 'Stinking Cloud', 'Strength', 'Animate Dead', 'Cure Blindness', 'Cause Blindness',
+  'Cure Disease', 'Cause Disease', 'Dispel Magic', 'Prayer', 'Remove Curse', 'Bestow Curse', 'Blink',
+  'Dispel Magic', 'Fireball', 'Haste', 'Hold Person', "Invisibility, 10' Radius", 'Lightning Bolt',
+  "Protection From Evil, 10' Radius", "Protection From Good, 10' Radius", 'Protection From Normal Missiles',
+  'Slow', 'Restoration',
+]
+
+/**
+ * A spell by the game's number. Spells the table does not describe still come back,
+ * with no effect, so they can be memorised and cast the way the original allowed.
+ */
 export function spellById(id: number): Spell | undefined {
-  return SPELLS.find((s) => s.id === id)
+  const known = SPELLS.find((s) => s.id === id)
+  if (known) return known
+  const at = spellLevelOf(id)
+  const name = SPELL_NAMES[id]
+  if (!at || !name) return undefined
+  return { id, name, class: at.class, level: at.level, target: 'self', effect: { kind: 'none' } }
 }
 
 /** The level and class of any spell id, from the game's numbering, for memorising. */

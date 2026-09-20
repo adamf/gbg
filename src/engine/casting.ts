@@ -169,7 +169,13 @@ export function cast(
 
     case 'bless':
       combat?.bless(e.bonus ?? 1)
+      if (spell.id === 42) combat?.curse(e.bonus ?? 1)
       lines.push('THE PARTY IS BLESSED.')
+      break
+
+    case 'curse':
+      combat?.curse(e.bonus ?? 1)
+      lines.push('THE ENEMY IS CURSED.')
       break
 
     case 'shield':
@@ -180,7 +186,7 @@ export function cast(
       break
 
     case 'none':
-      lines.push('NOTHING HAPPENS.')
+      lines.push('NOTHING VISIBLE HAPPENS.')
       break
   }
   return { lines }

@@ -94,6 +94,18 @@ describe('casting', () => {
     expect(hurt.hpCurrent).toBe(10)
   })
 
+  it('names every spell and casts the plain ones for nothing, and curses the foe', () => {
+    expect(spellById(47)?.name).toBe('Fireball')
+    expect(spellById(24)).toMatchObject({ name: 'Resist Fire', class: 'cleric', level: 2, effect: { kind: 'none' } })
+    expect(spellById(99)).toBeUndefined()
+    const cleric = record('SEAN', { levels: [1] })
+    const orc = record('ORC', { race: 0 })
+    const combat = new Combat([{ member: { character: cleric, items: [] }, label: 'SEAN' }], labelMonsters([{ member: { character: orc, items: [] }, count: 1 }]), () => 0)
+    cast(spellById(2)!, cleric, [orc], () => 0, combat)
+    expect(combat.hitModifier(false)).toBe(-1)
+    expect(combat.hitModifier(true)).toBe(0)
+  })
+
   it('hold person lets a good save through and holds the rest', () => {
     const cleric = record('SEAN', { levels: [3] })
     const foes = [record('A', { race: 0, save: 20 }), record('B', { race: 0, save: 2 })]
