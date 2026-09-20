@@ -41,6 +41,11 @@ const textLog = el('textLog')
 const menuPrompt = el('menuPrompt')
 const menuBox = el('menu')
 const picCanvas = el<HTMLCanvasElement>('pic')
+const spriteCanvas = el<HTMLCanvasElement>('sprite')
+
+function hideSprite(): void {
+  spriteCanvas.classList.remove('shown')
+}
 const partyPanel = el('party')
 const battlePanel = el('battle')
 const battleCanvas = el<HTMLCanvasElement>('battleMap')
@@ -202,6 +207,7 @@ const pageUi: SessionUi = {
   picture(image) {
     if (!image) {
       picCanvas.classList.remove('shown')
+      hideSprite()
       return
     }
     drawPixels(picCanvas, image)
@@ -209,12 +215,26 @@ const pageUi: SessionUi = {
   },
 
   encounter(view: EncounterView, image) {
-    if (image) {
+    if (!image) return
+    if (view.distance === 0) {
+      // Up close the original showed the portrait; the sprite comes down.
+      hideSprite()
       drawPixels(picCanvas, image)
       picCanvas.classList.add('shown')
+      return
     }
-    const distance = ['right in front of you', 'a square away', 'two squares away'][view.distance] ?? ''
-    note(`encounter ${distance}`)
+    // Further off, the group stands in the view, drawn at the size the art gives
+    // that distance and magnified whole.
+    drawPixels(spriteCanvas, image)
+    // The original drew these into an 88-pixel-tall view; scale to ours the same way.
+    const scale = Math.max(3, Math.round(viewCanvas.clientHeight / 110))
+    spriteCanvas.style.width = `${image.width * scale}px`
+    spriteCanvas.style.height = `${image.height * scale}px`
+    spriteCanvas.classList.add('shown')
+  },
+
+  spriteOff() {
+    hideSprite()
   },
 
   monsters(groups: readonly MonsterGroup[]) {
@@ -249,6 +269,7 @@ const pageUi: SessionUi = {
   },
 
   async battleMode(monsters) {
+    hideSprite()
     pageUi.print(`${monsters.length} FOE${monsters.length === 1 ? '' : 'S'} FACE YOU.`, true)
     const chosen = await pageUi.menu(undefined, ['FIGHT ON THE MAP', 'QUICK FIGHT'], 'horizontal')
     return chosen === 0 ? 'tactical' : 'quick'
@@ -443,6 +464,7 @@ async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
   clearMenu()
   textPanel.classList.remove('shown')
   picCanvas.classList.remove('shown')
+  hideSprite()
   partyPanel.classList.remove('shown')
   notes.textContent = ''
 

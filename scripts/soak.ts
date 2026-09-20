@@ -34,6 +34,7 @@ const ui: SessionUi = {
   delay: async () => {},
   picture: () => {},
   encounter: () => {},
+  spriteOff: () => {},
   monsters: () => {},
   combatRound: async () => (['fight', 'cast', 'run'] as const)[random(2)]!,
   party: () => {},

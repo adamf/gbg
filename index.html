@@ -110,6 +110,12 @@
     display: none;
   }
   #pic.shown { display: block; }
+  #sprite {
+    position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%);
+    image-rendering: pixelated; pointer-events: none; display: none;
+    filter: drop-shadow(0 0 18px #000);
+  }
+  #sprite.shown { display: block; }
   #party {
     position: absolute; top: 340px; right: 14px; width: 232px;
     background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
@@ -189,6 +195,7 @@
   </div>
   <div id="party"></div>
   <canvas id="pic"></canvas>
+  <canvas id="sprite"></canvas>
   <div id="battle">
     <canvas id="battleMap"></canvas>
     <div id="battleActions"></div>

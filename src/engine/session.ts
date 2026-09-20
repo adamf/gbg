@@ -48,6 +48,8 @@ export interface SessionUi {
   /** A picture to show over the view, or nothing to go back to the view. */
   picture(image: Rgba | undefined): void
   encounter(view: EncounterView, image: Rgba | undefined): void
+  /** The group is gone from the view. */
+  spriteOff(): void
   monsters(groups: readonly MonsterGroup[]): void
   /**
    * A round of combat has been resolved; shows the lines and asks whether to keep
@@ -935,6 +937,7 @@ export class GameSession {
           : (await this.library.sprite(this.area, view.sprite))?.frames[view.distance]
         ui.encounter(view, image)
       },
+      spriteOff: () => ui.spriteOff(),
       loadMonster: () => ui.monsters(this.vm.monsters),
       clearMonsters: () => ui.monsters([]),
       combat: (groups) => this.fight(groups),
