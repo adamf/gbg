@@ -24,6 +24,8 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **A CLI** — `inspect` reports what a folder holds and disassembles scripts; `dump` extracts
   every picture to PNG and every level to JSON.
 
+- **Your own party** — a new game offers the pre-made six or rolling characters: race,
+  class the race allows, dice with the race's adjustments, first-level tables.
 - **The party** — characters and inventories read from the CHRDATA files a saved game
   names, with hit points, saving throws, coins and the selected-character view the
   scripts read at 0x6B00. Damage lands; nobody fights back yet.
@@ -43,9 +45,8 @@ one server-side, or check a `.DAX` into git is the wrong change.
   shops buy and sell, and items carry the names the game printed, scanned from
   START.EXE. V shows a character sheet.
 
-Not here yet, in roughly the order they are needed: the rest of the spell list,
-wilderness travel, the original's combat art on the battle map, and writing the
-original's save files.
+Not here yet: wilderness travel between the outlying areas, monsters that cast or
+shoot, and writing the original's save and character files.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. Script commands that need
 those run as no-ops and say so in the page's notes line.

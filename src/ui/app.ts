@@ -445,7 +445,9 @@ async function newGame(): Promise<void> {
     return
   }
   const session = await openPlayScreen(lib)
-  await session.resume(saved)
+  const how = await pageUi.menu('A NEW GAME.', ['USE THE PRE-MADE PARTY', 'CREATE A PARTY'], 'horizontal')
+  const members = how === 1 ? await session.createParty() : undefined
+  await session.resume(saved, members && members.length > 0 ? members : undefined)
 }
 
 async function continueGame(): Promise<void> {

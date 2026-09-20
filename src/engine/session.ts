@@ -28,7 +28,7 @@ import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
 import { readyToTrain, train, TRAINING_COST } from './training.js'
-import { ready as readyItem, unready } from './equipment.js'
+import { ready as readyItem, recompute, unready } from './equipment.js'
 import type { ItemType } from '../formats/items.js'
 import { pay } from './treasure.js'
 
@@ -138,9 +138,9 @@ export class GameSession {
    * Starts where a saved game left off: its last script, at its last position. A new
    * game is this with the saved game the original shipped.
    */
-  async resume(saved: SavedGame): Promise<void> {
+  async resume(saved: SavedGame, members?: Member[]): Promise<void> {
     this.restore(saved)
-    this.roster.members = await this.library.party(saved)
+    this.roster.members = members ?? await this.library.party(saved)
     for (const { character } of this.roster.members) if (canCast(character) && character.prepared.length === 0) autoPrepare(character)
     this.ui.party(this.roster.members, this.roster.selected)
     const blockId = this.memory.read(POOL_ADDRESSES.lastEclBlock)
@@ -613,6 +613,45 @@ export class GameSession {
     return this.itemTypes
   }
 
+  /** Rolls up a party through the menus, for a new game without the pre-made six. */
+  async createParty(): Promise<Member[]> {
+    const { ALIGNMENTS, CLASSES_BY_RACE, createCharacter, qualifies, rollStats } = await import('./create.js')
+    const { CLASSES, RACES } = await import('../formats/character.js')
+    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const types = await this.types()
+    const members: Member[] = []
+    while (members.length < 6) {
+      const races = RACES.filter((r) => r !== 'monster')
+      const start = await this.ui.menu(`${members.length} IN THE PARTY. ADD SOMEONE?`, [...races.map((r) => r.toUpperCase()), members.length > 0 ? 'THE PARTY IS COMPLETE' : 'USE THE PRE-MADE PARTY'], 'vertical')
+      const race = races[start]
+      if (!race) break
+      let stats = rollStats(race, random)
+      for (;;) {
+        const line = `STR ${stats.str}  INT ${stats.int}  WIS ${stats.wis}  DEX ${stats.dex}  CON ${stats.con}  CHA ${stats.cha}`
+        const keep = await this.ui.menu(line, ['KEEP THESE', 'ROLL AGAIN'], 'horizontal')
+        if (keep === 0) break
+        stats = rollStats(race, random)
+      }
+      const allowed = (CLASSES_BY_RACE[race as keyof typeof CLASSES_BY_RACE] ?? []).filter((i) => qualifies(i, stats))
+      if (allowed.length === 0) {
+        this.ui.print('THOSE DICE ALLOW NO CLASS FOR THAT RACE. ROLL AGAIN.', true)
+        continue
+      }
+      const classIndex = allowed[await this.ui.menu('CLASS:', allowed.map((i) => CLASSES[i]!.toUpperCase()), 'vertical')]!
+      const sex = (await this.ui.menu('SEX:', ['MALE', 'FEMALE'], 'horizontal')) as 0 | 1
+      const alignment = await this.ui.menu('ALIGNMENT:', [...ALIGNMENTS], 'vertical')
+      this.ui.print('NAME?', true)
+      const name = (await this.ui.inputString()).trim() || `HERO ${members.length + 1}`
+      const character = createCharacter({ name, race, classIndex, sex, alignment, stats }, random)
+      recompute(character, [], types)
+      const member: Member = { character, items: [] }
+      members.push(member)
+      this.ui.print(await this.sheetOf(member), true)
+      await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+    }
+    return members
+  }
+
   /** The sheet's equipment menu: ready or put down each thing carried. */
   async equip(index: number): Promise<void> {
     const member = this.roster.members[index]
@@ -694,7 +733,10 @@ export class GameSession {
   /** A member's sheet, for the page to show on request. */
   async sheet(index: number): Promise<string> {
     const member = this.roster.members[index]
-    if (!member) return ''
+    return member ? this.sheetOf(member) : ''
+  }
+
+  private async sheetOf(member: Member): Promise<string> {
     const names = await this.names()
     const c = member.character
     const lines = [
