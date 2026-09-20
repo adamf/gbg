@@ -14,7 +14,7 @@ import { canWalk, cellAt, DIRECTIONS, type Direction, type GeoMap } from '../for
 import type { GameLibrary, LevelRef, SavedGame } from '../formats/library.js'
 import { startingCell, startingFacing } from './dungeon.js'
 import {
-  CALL_DUEL, CALL_QUIET, CALL_REDRAW, CALL_SOUND, CALL_STEP_FORWARD, EclMemory, EclVm, POOL_ADDRESSES,
+  CALL_DUEL, CALL_QUIET, CALL_REDRAW, CALL_WILD, CALL_SOUND, CALL_STEP_FORWARD, EclMemory, EclVm, POOL_ADDRESSES,
   type CombatOutcome, type EclHost, type EncounterView, type MonsterGroup, type VmWorld,
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
@@ -320,6 +320,11 @@ export class GameSession {
     return false
   }
 
+  /** Outdoors: the original showed the map from above and let the script do the walking. */
+  get overhead(): boolean {
+    return this.memory.read(POOL_ADDRESSES.inDungeon) === 0
+  }
+
   get searching(): boolean {
     return (this.memory.read(POOL_ADDRESSES.searchFlags) & 1) !== 0
   }
@@ -368,7 +373,8 @@ export class GameSession {
     }
 
     this.party = result.state
-    this.advanceTime(this.searching ? 10 : 1)
+    // A wilderness square is a long way; a searched dungeon square is slow going.
+    this.advanceTime(this.overhead ? 60 : this.searching ? 10 : 1)
     await this.withScript(() => this.afterStep())
     return true
   }
@@ -1027,7 +1033,8 @@ export class GameSession {
             return
           }
           default:
-            if (!CALL_QUIET.has(id)) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
+            if (CALL_WILD.has(id)) ui.showParty(this.party)
+            else if (!CALL_QUIET.has(id)) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
         }
       },
       program: async (id) => {

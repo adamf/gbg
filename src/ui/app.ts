@@ -48,6 +48,7 @@ function hideSprite(): void {
 }
 const partyPanel = el('party')
 const battlePanel = el('battle')
+const overheadCanvas = el<HTMLCanvasElement>('overhead')
 const battleCanvas = el<HTMLCanvasElement>('battleMap')
 const battleActions = el('battleActions')
 
@@ -487,6 +488,13 @@ async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
 function refreshHud(state: PartyState): void {
   if (!currentMap) return
   drawMinimap(mapCanvas, currentMap, state)
+  // Outdoors the map itself is the view.
+  if (session?.overhead) {
+    drawMinimap(overheadCanvas, currentMap, state)
+    overheadCanvas.classList.add('shown')
+  } else {
+    overheadCanvas.classList.remove('shown')
+  }
 
   const cell = currentMap.cells[state.row * 16 + state.col]
   whereLine.textContent =

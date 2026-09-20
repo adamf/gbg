@@ -45,8 +45,14 @@ one server-side, or check a `.DAX` into git is the wrong change.
   shops buy and sell, and items carry the names the game printed, scanned from
   START.EXE. V shows a character sheet.
 
-Not here yet: wilderness travel between the outlying areas, monsters that cast or
-shoot, and writing the original's save and character files.
+- **Outdoors** — when a script clears the in-dungeon word the map is shown from above
+  and a square takes an hour; the wilderness blocks (25 to 27) carry their own
+  encounters. The scripts' overland coordinates run on a larger grid whose data is not
+  yet found, so they stay plain memory and the party walks the map it is on.
+- **Monsters that shoot and cast** — from the same gear and books the party uses.
+
+Not here yet: the overland map the wilderness scripts count squares on, and writing
+the original's save and character files.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. Script commands that need
 those run as no-ops and say so in the page's notes line.

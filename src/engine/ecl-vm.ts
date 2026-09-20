@@ -328,7 +328,13 @@ export const CALL_SOUND = 0xba03
 /** The next COMBAT is a duel: one party member against one foe. */
 export const CALL_DUEL = 0x8001
 /** Wilderness-map bookkeeping and picture-area helpers with nothing to do here. */
-export const CALL_QUIET = new Set([0x0806, 0x2c51, 0x2c4e, 0xc009, 0xc018, 0xc01b, 0xc003])
+export const CALL_QUIET = new Set([0x0806, 0x2c51, 0x2c4e, 0xc009, 0xc003])
+/**
+ * Wilderness moves. The script keeps its own overland coordinates at 0x00fb/0x00fc on
+ * a grid larger than the map; these calls committed them. Here the party walks the
+ * map it is on and the calls only redraw.
+ */
+export const CALL_WILD = new Set([0xc018, 0xc01b])
 
 const MAX_STEPS = 200_000
 
