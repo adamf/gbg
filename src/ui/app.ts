@@ -430,6 +430,8 @@ window.addEventListener('keydown', (event) => {
     const current = session
     void pageUi.who('VIEW WHO?', current.roster.members).then(async (index) => {
       pageUi.print(await current.sheet(index), true)
+      const next = await pageUi.menu(undefined, ['EQUIP', 'DONE'], 'horizontal')
+      if (next === 0) await current.equip(index)
     })
     return
   }

@@ -99,6 +99,11 @@ export interface ItemType {
   largeSides: number
   largeBonus: number
   attacks: number
+  /**
+   * For armour, bit 7 set and the armour's class on the inverted scale (Leather is
+   * 52, AC 8; Plate 57, AC 3); for a shield, bit 7 and the bonus. Zero otherwise.
+   */
+  protection: number
   dice: number
   sides: number
   bonus: number
@@ -108,6 +113,11 @@ export interface ItemType {
 }
 
 export const ITEM_TYPE_COUNT = 0x81
+
+/** What a type fills: 0 a weapon hand, 1 the shield arm, 2 the body. */
+export const SLOT_WEAPON = 0
+export const SLOT_SHIELD = 1
+export const SLOT_ARMOUR = 2
 
 /** The ITEMS file: a two-byte header, then 16-byte records by item type. */
 export function readItemTypes(data: Uint8Array): ItemType[] {
@@ -121,6 +131,7 @@ export function readItemTypes(data: Uint8Array): ItemType[] {
       slot: b(0), hands: b(1),
       largeDice: b(2), largeSides: b(3), largeBonus: signed(4),
       attacks: b(5),
+      protection: b(6),
       dice: b(9), sides: b(10), bonus: signed(11),
       range: b(12), classFlags: b(13), flags: b(14),
     })

@@ -27,6 +27,8 @@ import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
 import { readyToTrain, train, TRAINING_COST } from './training.js'
+import { ready as readyItem, unready } from './equipment.js'
+import type { ItemType } from '../formats/items.js'
 import { pay } from './treasure.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
@@ -100,6 +102,7 @@ export class GameSession {
   /** What TREASURE left on the ground, or a shop's shelf. */
   pool: Pool = emptyPool()
   private itemNames: string[] = []
+  private itemTypes: ItemType[] = []
 
   constructor(private readonly library: GameLibrary, private readonly ui: SessionUi) {
     this.memory.world = this.world()
@@ -509,6 +512,33 @@ export class GameSession {
   private async names(): Promise<string[]> {
     if (this.itemNames.length === 0) this.itemNames = await this.library.itemNames()
     return this.itemNames
+  }
+
+  private async types(): Promise<ItemType[]> {
+    if (this.itemTypes.length === 0) this.itemTypes = await this.library.itemTypes()
+    return this.itemTypes
+  }
+
+  /** The sheet's equipment menu: ready or put down each thing carried. */
+  async equip(index: number): Promise<void> {
+    const member = this.roster.members[index]
+    if (!member || this.running) return
+    const names = await this.names()
+    const types = await this.types()
+    if (types.length === 0) {
+      this.ui.print('THE ITEMS TABLE IS MISSING FROM THE FOLDER, SO NOTHING CAN BE READIED.', true)
+      return
+    }
+    for (;;) {
+      const options = member.items.map((item) => `${item.readied ? 'PUT DOWN' : 'READY'} ${itemDisplayName(item, names)}`)
+      const choice = await this.ui.menu(`${member.character.name}: AC ${member.character.ac}`, [...options, 'DONE'], 'vertical')
+      if (choice >= options.length) break
+      const item = member.items[choice]!
+      if (item.readied) unready(member.character, member.items, choice, types)
+      else if (!readyItem(member.character, member.items, choice, types)) this.ui.print('THAT CANNOT BE READIED.', true)
+      this.ui.party(this.roster.members, this.roster.selected)
+    }
+    this.ui.print(await this.sheet(index), true)
   }
 
   /** What is on the ground: share the coins, pick up the items, or walk away. */
