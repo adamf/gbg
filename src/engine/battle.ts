@@ -5,7 +5,10 @@
  *
  * Every dungeon square becomes a 2×2 patch of the battle map and its walls become
  * edges nobody crosses, so a fight in a corridor is fought in that corridor. The
- * rules of a blow are `combat.ts`'s; this decides who is where and whose turn it is.
+ * map is sheared the way the original's combat screen was: each dungeon row sits one
+ * square further right than the row above, so a north–south wall runs as one
+ * continuous diagonal. The rules of a blow are `combat.ts`'s; this decides who is
+ * where and whose turn it is.
  */
 
 import type { Character } from '../formats/character.js'
@@ -40,8 +43,13 @@ function able(c: Character): boolean {
   return c.status === 'okay' && c.hpCurrent > 0
 }
 
+/** Top-left battle square of a dungeon cell in the window, shear included. */
+export function screenOf(r: number, c: number): { x: number; y: number } {
+  return { x: c * CELL_SPAN + r, y: r * CELL_SPAN }
+}
+
 export class Battle {
-  readonly width = (WINDOW * 2 + 1) * CELL_SPAN
+  readonly width = (WINDOW * 2 + 1) * CELL_SPAN + WINDOW * 2 + 1
   readonly height = (WINDOW * 2 + 1) * CELL_SPAN
   /** Edges that cannot be crossed, as "x,y,dir" from the square being left. */
   private readonly walls = new Set<string>()
@@ -75,17 +83,23 @@ export class Battle {
   private build(map: GeoMap, at: { row: number; col: number }): void {
     this.originRow = at.row - WINDOW
     this.originCol = at.col - WINDOW
+    // The shear leaves a triangle of nothing at each side of the window.
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) this.solid.add(`${x},${y}`)
+    }
     for (let r = 0; r <= WINDOW * 2; r++) {
       for (let c = 0; c <= WINDOW * 2; c++) {
         const row = this.originRow + r
         const col = this.originCol + c
         const cell = cellAt(map, row, col)
         const rock = !cell || isSolid(cell)
+        const origin = screenOf(r, c)
         for (let j = 0; j < CELL_SPAN; j++) {
           for (let i = 0; i < CELL_SPAN; i++) {
-            const x = c * CELL_SPAN + i
-            const y = r * CELL_SPAN + j
-            if (rock) { this.solid.add(`${x},${y}`); continue }
+            const x = origin.x + i
+            const y = origin.y + j
+            if (rock) continue
+            this.solid.delete(`${x},${y}`)
             // The edges of the patch that face another dungeon square.
             for (const direction of DIRECTIONS) {
               const step = STEPS[direction]
@@ -128,9 +142,7 @@ export class Battle {
 
   /** Puts the party on its square and the monsters ahead, as far off as they were seen. */
   private place(party: Combatant[], monsters: Combatant[], at: { facing: Direction }, distance: number): void {
-    const centre = WINDOW * CELL_SPAN
     const ahead = STEPS[at.facing]
-    const side = { dx: -ahead.dy, dy: ahead.dx }
     const spots = (origin: { x: number; y: number }, count: number): { x: number; y: number }[] => {
       // Ring outward from the origin until everyone has a square.
       const found: { x: number; y: number }[] = []
@@ -147,13 +159,16 @@ export class Battle {
       return found
     }
 
-    const partyOrigin = { x: centre, y: centre }
+    const partyOrigin = screenOf(WINDOW, WINDOW)
     for (const [i, spot] of spots(partyOrigin, party.length).entries()) {
       this.fighters.push({ combatant: party[i]!, side: 'party', ...spot, moves: 0, acted: false })
     }
-    const away = (distance + 1) * CELL_SPAN
-    let monsterOrigin = { x: centre + ahead.dx * away + side.dx, y: centre + ahead.dy * away + side.dy }
-    if (this.solid.has(`${monsterOrigin.x},${monsterOrigin.y}`)) monsterOrigin = { x: centre + ahead.dx * CELL_SPAN, y: centre + ahead.dy * CELL_SPAN }
+    // The monsters stand in the cell as far ahead as they were seen; nearer if that is rock.
+    let monsterOrigin = partyOrigin
+    for (let d = distance + 1; d >= 1; d--) {
+      const candidate = screenOf(WINDOW + ahead.dy * d, WINDOW + ahead.dx * d)
+      if (!this.solid.has(`${candidate.x},${candidate.y}`)) { monsterOrigin = candidate; break }
+    }
     for (const [i, spot] of spots(monsterOrigin, monsters.length).entries()) {
       this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, moves: 0, acted: false })
     }

@@ -10,8 +10,12 @@ import type { Battle, Fighter } from '../engine/battle.js'
 import type { Rgba } from '../formats/ega.js'
 
 export const SQUARE = 36
-const BAND = 0.55
-const CAP = 3
+/** A horizontal wall is a strip this tall above its edge. */
+const STRIP = 0.4
+/** A vertical wall is a slanted band this thick, leaning right by SHEAR over a square. */
+const THICK = 0.26
+const SHEAR = 0.5
+const CAP = 2
 
 export interface BattleArt {
   tiles: Rgba[]
@@ -81,9 +85,11 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
     }
   }
 
-  // Walls, each boundary once: the slanted band for a vertical edge, the strip
-  // above a horizontal one, both capped in pale stone.
-  const band = SQUARE * BAND
+  // Walls, each boundary once and only where floor meets them: the thin slanted band
+  // for a vertical edge, the strip above a horizontal one, both capped in pale stone.
+  const strip = SQUARE * STRIP
+  const thick = SQUARE * THICK
+  const shear = SQUARE * SHEAR
   for (let y = 0; y < battle.height; y++) {
     for (let x = 0; x < battle.width; x++) {
       if (battle.isSolid(x, y)) continue
@@ -107,18 +113,20 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
         fill()
         if (edge.dy !== 0) {
           const lineY = edge.dy < 0 ? py : py + SQUARE
-          g.fillRect(px, lineY - band, SQUARE, band)
-          cap(px, lineY - band, px + SQUARE, lineY - band)
+          g.fillRect(px, lineY - strip, SQUARE, strip)
+          cap(px, lineY - strip, px + SQUARE, lineY - strip)
         } else {
-          const lineX = edge.dx < 0 ? px : px + SQUARE
+          // The map is sheared a square per two rows, so the band leans half a
+          // square a row and the next row's band carries straight on from it.
+          const lineX = (edge.dx < 0 ? px : px + SQUARE) + (y % 2) * shear
           g.beginPath()
-          g.moveTo(lineX, py)
-          g.lineTo(lineX + band, py)
-          g.lineTo(lineX + band + SQUARE, py + SQUARE)
-          g.lineTo(lineX + SQUARE, py + SQUARE)
+          g.moveTo(lineX - thick / 2, py)
+          g.lineTo(lineX + thick / 2, py)
+          g.lineTo(lineX + thick / 2 + shear, py + SQUARE)
+          g.lineTo(lineX - thick / 2 + shear, py + SQUARE)
           g.closePath()
           g.fill()
-          cap(lineX, py, lineX + SQUARE, py + SQUARE)
+          cap(lineX - thick / 2, py, lineX - thick / 2 + shear, py + SQUARE)
         }
       }
     }

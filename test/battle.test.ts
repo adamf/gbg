@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { CHARACTER_RECORD_SIZE, readCharacter } from '../src/formats/character.js'
 import { readGeoMap } from '../src/formats/geo.js'
 import { buildGeoBlock } from './fixtures.js'
-import { Battle, BATTLE_STEPS, CELL_SPAN } from '../src/engine/battle.js'
+import { Battle, BATTLE_STEPS, screenOf } from '../src/engine/battle.js'
 import { labelMonsters } from '../src/engine/combat.js'
 
 function fighter(name: string, hp: number, race = 7, movement = 12) {
@@ -33,13 +33,13 @@ describe('the battle map', () => {
     const party = [{ member: { character: fighter('HERO', 20), items: [] }, label: 'HERO' }]
     const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0), items: [] }, count: 2 }])
     const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 0)
-    const centre = 3 * CELL_SPAN
-    expect(battle.isSolid(centre, centre)).toBe(false)
-    expect(battle.isSolid(centre - CELL_SPAN, centre)).toBe(true)
-    expect(battle.blocked(centre, centre, -1, 0)).toBe(true)
-    expect(battle.blocked(centre, centre, 0, -1)).toBe(false)
+    const centre = screenOf(3, 3)
+    expect(battle.isSolid(centre.x, centre.y)).toBe(false)
+    expect(battle.isSolid(screenOf(3, 2).x, centre.y)).toBe(true)
+    expect(battle.blocked(centre.x, centre.y, -1, 0)).toBe(true)
+    expect(battle.blocked(centre.x, centre.y, 0, -1)).toBe(false)
     const hero = battle.fighters.find((f) => f.side === 'party')!
-    expect([hero.x, hero.y]).toEqual([centre, centre])
+    expect([hero.x, hero.y]).toEqual([centre.x, centre.y])
     const orcs = battle.fighters.filter((f) => f.side === 'monster')
     expect(orcs.every((o) => o.y < hero.y)).toBe(true)
   })
