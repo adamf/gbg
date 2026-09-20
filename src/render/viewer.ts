@@ -110,6 +110,17 @@ export class DungeonViewer {
     return this.party
   }
 
+  /** Puts the party somewhere with no animation: a script moved them. */
+  setParty(state: PartyState): void {
+    this.party = { ...state }
+    this.motion = { kind: 'idle' }
+    this.heading = headingRadians(state.facing)
+    this.position = cellToWorld(state.row, state.col)
+    this.applyCamera()
+    this.events.onMove?.(this.party)
+    this.drain()
+  }
+
   get isMoving(): boolean {
     return this.motion.kind !== 'idle'
   }

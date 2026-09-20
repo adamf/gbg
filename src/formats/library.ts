@@ -12,7 +12,7 @@ import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSumm
 import { blankRgba, type Rgba } from './ega.js'
 import { detectGame, mapName, type GameInfo } from './detect.js'
 import { readGeoMap, type GeoMap } from './geo.js'
-import { decodeImageBlock, isImageBlock } from './image.js'
+import { decodeAnyImage, decodeImageBlock, isImageBlock, type DecodedImage } from './image.js'
 import { readWallDefBlock, renderWallTexture, type WallDef } from './walldef.js'
 
 export interface FileSource {
@@ -35,6 +35,37 @@ export interface LevelEvents {
   program: EclProgram
   /** Event number to what that event says and does. */
   summaries: Map<number, EventSummary>
+}
+
+/**
+ * A saved game's global state: what the scripts read and write between levels.
+ *
+ * The layout is the one the original wrote: one byte naming the area, then the
+ * 2K of game globals, 2K of area and character scratch, and 1K more the scripts
+ * also address. Pool of Radiance ships two of these — SAVGAMA.DAT and SAVGAMJ.DAT —
+ * as the starting points of a new game with either pre-made party.
+ */
+export interface SavedGame {
+  area: number
+  globals: Uint8Array
+  areaScratch: Uint8Array
+  extra: Uint8Array
+}
+
+export const SAVED_GAME_GLOBALS = 0x800
+export const SAVED_GAME_SCRATCH = 0x800
+export const SAVED_GAME_EXTRA = 0x400
+
+export function readSavedGame(data: Uint8Array): SavedGame | undefined {
+  const needed = 1 + SAVED_GAME_GLOBALS + SAVED_GAME_SCRATCH + SAVED_GAME_EXTRA
+  if (data.length < needed) return undefined
+  let at = 1
+  const take = (n: number): Uint8Array => {
+    const slice = data.slice(at, at + n)
+    at += n
+    return slice
+  }
+  return { area: data[0]!, globals: take(SAVED_GAME_GLOBALS), areaScratch: take(SAVED_GAME_SCRATCH), extra: take(SAVED_GAME_EXTRA) }
 }
 
 export interface WallSet {
@@ -112,7 +143,12 @@ export class GameLibrary {
    */
   async wallSetFor(ref: LevelRef): Promise<WallSet> {
     const ids = (await this.wallSetIdsFromEcl(ref)) ?? [ref.id]
-    const blocks = await this.locateWallDefBlocks(ids)
+    return this.wallSetFromIds(ids)
+  }
+
+  /** The wall graphics for a set of WALLDEF block ids, as a LOAD PIECES names them. */
+  async wallSetFromIds(ids: readonly number[]): Promise<WallSet> {
+    const blocks = await this.locateWallDefBlocks(ids.filter((id) => id !== 0xff))
 
     const textures: Rgba[] = []
     const sources: WallSet['sources'] = []
@@ -208,6 +244,65 @@ export class GameLibrary {
       }
     }
     return found
+  }
+
+  /** A level by the map id the scripts use, looking in the given area's GEO file first. */
+  async levelById(id: number, area?: number): Promise<LevelRef | undefined> {
+    const files = this.geoFiles()
+    if (area !== undefined) {
+      const own = `GEO${area}.DAX`
+      files.sort((a, b) => (a === own ? -1 : b === own ? 1 : 0))
+    }
+    for (const file of files) {
+      const archive = await this.archive(file)
+      const block = archive?.blocks.find((b) => b.id === id && b.data.length >= 1026)
+      if (block) return { file, id, name: mapName(this.game.id, id) }
+    }
+    return undefined
+  }
+
+  /** The raw script block with a given id, and which area file it came from. */
+  async eclBlock(id: number, area?: number): Promise<{ file: string; area: number; data: Uint8Array } | undefined> {
+    const files = this.source.list().filter((n) => /^ECL\d*\.DAX$/.test(n)).sort()
+    if (area !== undefined) {
+      const own = `ECL${area}.DAX`
+      files.sort((a, b) => (a === own ? -1 : b === own ? 1 : 0))
+    }
+    for (const file of files) {
+      const archive = await this.archive(file)
+      const block = archive?.blocks.find((b) => b.id === id)
+      if (block) return { file, area: Number(file.match(/\d+/)?.[0] ?? 0), data: block.data }
+    }
+    return undefined
+  }
+
+  /** The first frame of a picture block in an area's PIC file, for the PICTURE command. */
+  async picture(area: number, id: number): Promise<Rgba | undefined> {
+    return (await this.artBlock(`PIC${area}.DAX`, id))?.frames[0]
+  }
+
+  /**
+   * A monster group seen down the corridor: the area's SPRIT block, whose frames are
+   * the group drawn at three distances, nearest first.
+   */
+  async sprite(area: number, id: number): Promise<DecodedImage | undefined> {
+    return this.artBlock(`SPRIT${area}.DAX`, id)
+  }
+
+  private async artBlock(file: string, id: number): Promise<DecodedImage | undefined> {
+    const archive = await this.archive(file)
+    for (const block of archive?.blocks ?? []) {
+      if (block.id !== id) continue
+      const decoded = decodeAnyImage(block.data, file)
+      if (decoded) return decoded
+    }
+    return undefined
+  }
+
+  /** The saved game a new game starts from: SAVGAMA.DAT, or whichever letter is asked for. */
+  async savedGame(letter = 'A'): Promise<SavedGame | undefined> {
+    const data = await this.source.read(`SAVGAM${letter.toUpperCase()}.DAT`)
+    return data ? readSavedGame(data) : undefined
   }
 
   /** Every decoded script in one ECL archive. */

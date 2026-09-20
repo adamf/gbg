@@ -1,7 +1,10 @@
 # Gold Box Web
 
-Reads the data files from SSI's Gold Box games and walks their dungeons in a browser in 3D.
-Targets **Pool of Radiance (DOS)** first; the readers are shared across the family.
+Reads the data files from SSI's Gold Box games and plays them in a browser. The goal is the
+**full game** — walking, events, encounters, characters, combat, saves — running on the
+original data with a modern 3D view and UI around it. Targets **Pool of Radiance (DOS)**
+first; the readers are shared across the family. Today it is a dungeon viewer; the rest is
+being built on top of it.
 
 **No game data belongs in this repository, ever.** This is code that reads files, not files.
 The browser reads the player's own folder in the page and uploads nothing — there is no server
@@ -13,11 +16,17 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **The file readers** — DAX archives, EGA pictures, wall graphics, dungeon levels, and the
   ECL scripts that drive them. `docs/FORMATS.md` is the write-up and the place to look first.
 - **A 3D dungeon crawl** — real geometry from the level data, the original art on the walls,
-  step-and-turn movement, and the level's own event text when you stand on a trigger.
+  step-and-turn movement.
+- **The scripts, running** — an ECL interpreter with the original's semantics, a game
+  session that runs the right entry points on level load and after every step, and the
+  page as its host: text box, menus, pictures, encounter sprites. A new game starts from
+  the shipped saved game, in the Slums.
 - **A CLI** — `inspect` reports what a folder holds and disassembles scripts; `dump` extracts
   every picture to PNG and every level to JSON.
 
-Not here: combat, characters, items, spells, saved games. The scripts are read but not run.
+Not here yet, in roughly the order they are needed: the party (characters, items,
+spells), monsters, combat, resting, and writing saved games. Script commands that need
+those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
 
@@ -32,10 +41,14 @@ Plain TypeScript and three.js. Read in this order:
   - `ecl.ts` the scripts: instruction decoding, six-bit packed text, event tables
   - `library.ts` ties a folder together: game, levels, wall sets, each level's script
 - `src/engine/` — the rules. `dungeon.ts` turns a level into faces and floors; `party.ts` is
-  where the party stands and which way it faces.
+  where the party stands and which way it faces; `ecl-vm.ts` runs the scripts against a
+  host interface; `session.ts` is the game loop that ties memory, map, party and script
+  together.
 - `src/render/` — three.js. `dungeon-scene.ts` builds the geometry, merged per wall graphic;
   `textures.ts` is the pixels-to-surfaces pipeline; `viewer.ts` is the camera, torch and feel.
 - `src/ui/` — the page: folder picker, level list, minimap, event text.
+- `vite.config.ts` — in `npm run dev` only, serves the folder named by `GOLDBOX_DATA` at
+  `/dev-data/` so the page can load it without the picker. It is not part of the build.
 - `src/cli/` — `inspect` and `dump`, plus a small PNG writer so there is no image dependency.
 
 ## Rules that are easy to break by accident
@@ -60,6 +73,7 @@ Plain TypeScript and three.js. Read in this order:
 ```bash
 npm install
 npm run dev                          # the crawl
+GOLDBOX_DATA=/path/to/game npm run dev   # …with a folder preloaded (local dev server only)
 npm test                             # the suite; no game data required
 npm run inspect -- /path/to/game     # what a folder holds
 npm run inspect -- /path/to/game ECL1.DAX 1   # disassemble a script

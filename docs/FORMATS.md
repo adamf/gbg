@@ -242,7 +242,8 @@ matter for reading a level:
 | 0x01 | GOTO | 1 | ends the run, continues at the address |
 | 0x02 | GOSUB | 1 | continues at the address *and* falls through |
 | 0x11, 0x12 | PRINT, PRINTCLEAR | 1 | the text the player reads |
-| 0x13, 0x33 | RETURN, PRINT RETURN | 0 | ends the run |
+| 0x13 | RETURN | 0 | ends the run, or returns from a GOSUB |
+| 0x33 | PRINT RETURN | 0 | a line break in the text box |
 | 0x16–0x1b | IF =, <>, <, >, <=, >= | 0 | makes the **next** instruction conditional |
 | 0x20 | NEW ECL | 1 | loads another script; ends the run |
 | 0x21 | LOAD FILES | 3 | first operand is the map id |
@@ -264,9 +265,9 @@ not be taken, so decoding has to carry on past it.
 A cell's event number indexes a jump table built by an `ON GOTO`. A block contains several
 such tables; the level's event dispatch is **the largest one with more than four entries**.
 
-**Unverified:** that event number *N* is entry *N* of that table rather than *N − 1*.
-Direct indexing is the natural reading, and event 0 means "no event" on a cell. One real
-level tells you which it is.
+Event number *N* is entry *N* of that table — the interpreter's ON GOTO indexes from
+zero, and running a real level confirms it. Event 0 is not "no event": it is the entry
+most levels run on every ordinary square, usually a random-encounter roll.
 
 ### Which wall set a level uses
 
@@ -275,12 +276,58 @@ script, and its `LOAD PIECES` gives the three wall set ids. Wall set ids are WAL
 ids across all the WALLDEF files. Where no script is found, the loader falls back to the
 WALLDEF block whose id matches the map's.
 
-### What this decoder does not do
+### Running them — `src/engine/ecl-vm.ts`
 
-It reads the scripts; it does not run them. There is no party, no clock and no flags to
-evaluate conditions against, so branches are not taken — both sides of every `IF` are
-reported. That makes an event summary a description of what an event *can* do, which is
-the honest thing to show without a full game state.
+The decoder walks the code; the interpreter executes it, with the semantics of the
+Curse of the Azure Bonds reimplementation (`coab`, `engine/ovr003.cs`). The things a
+reader needs to know:
+
+- **Memory is 16-bit words at 16-bit addresses**, except the script's own bytes, which
+  are bytes. Reads of `0xC04B`–`0xC04F` return the party's column, row, facing, the wall
+  ahead and the square's event byte; writes to the first three move the party.
+- **COMPARE a, b** sets six flags for `a = b`, `a <> b`, `a < b`, `a > b`, `a <= b`,
+  `a >= b`; **IF** skips the *next instruction* when its flag is false. AND and OR leave
+  the flags as if comparing zero with the result, so an `IF <` after them means "not
+  zero".
+- **SUBTRACT a, b, dst** stores `b - a`; the other arithmetic is in operand order.
+- **RANDOM n, dst** stores 0..n inclusive.
+- **ON GOTO sel, count, t0..** jumps to `t[sel]` and falls through when `sel >= count`.
+  That settles the question above: event *N* is entry *N*, and event 0 is a real
+  handler — the random-encounter code most levels run on every empty square.
+- **GET TABLE base, i, dst** reads `base + i`; **SAVE TABLE v, base, i** writes it.
+- **NEW ECL n** loads script *n* and runs its start entry; **LOAD FILES** and
+  **LOAD PIECES** swap the map and wall sets under the party without moving them.
+
+The five entry points run in a fixed order: `start` when a script is loaded, then
+`vmRun` and `searchLocation` — the latter being the event dispatch — after that and
+after every step. `preCampCheck` and `campInterrupted` bracket resting, which is not
+built yet.
+
+### What the interpreter does not do yet
+
+Anything that needs a party: combat, damage, items, spells, WHO, CHECK PARTY and the
+selected-character fields at `0x6B00`. Those commands run, do nothing, and say so in
+the page's notes.
+
+---
+
+## Saved games — `src/formats/library.ts`
+
+`SAVGAM?.DAT`, one letter per slot. Pool of Radiance ships `A` and `J`: the starting
+state of a new game with each of its two pre-made parties. The layout is the one
+`coab` loads:
+
+| offset | size | meaning |
+|---|---|---|
+| 0 | 1 | area number — which ECL, GEO, PIC and SPRIT files are current |
+| 1 | 0x800 | game globals: addresses `0x4900`–`0x4CFF`, two bytes per address |
+| 0x801 | 0x800 | area and character scratch: addresses `0x6B00`–`0x6FFF` |
+| 0x1001 | 0x400 | more scratch: addresses `0x9700`–`0x98FF` |
+| 0x1401 | rest | the current script image and the party, not read yet |
+
+Among the globals, in word offsets: `0x18E`–`0x196` the clock (minutes ones, minutes
+tens, hour, day, year), `0x1E0`/`0x1E2` the party's last column and row, `0x1E4` the
+last script loaded. A new game therefore starts in the Slums, at 10:50.
 
 ---
 

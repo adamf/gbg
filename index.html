@@ -72,7 +72,7 @@
   #map { width: 100%; aspect-ratio: 1; display: block; border-radius: 8px; background: #0b0d12; }
   #where { margin-top: 8px; font-size: 12.5px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
   #keys {
-    position: absolute; bottom: 14px; left: 14px;
+    position: absolute; bottom: 14px; left: 14px; z-index: 1;
     background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
     padding: 10px 14px; font-size: 12.5px; color: var(--ink-dim); backdrop-filter: blur(6px);
   }
@@ -81,18 +81,39 @@
     font: 11.5px ui-monospace, monospace;
   }
   #back { position: absolute; top: 14px; left: 14px; }
-  #event {
-    position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%);
-    width: min(640px, calc(100% - 300px));
+  #warnings { margin-top: 10px; font-size: 12.5px; color: #e0a05f; }
+
+  /* ---- the game's text box ---- */
+  #text {
+    position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%);
+    width: min(720px, calc(100% - 300px));
     background: #14100ae6; border: 1px solid #5e4c22; border-radius: 12px;
     padding: 14px 18px; backdrop-filter: blur(6px);
-    opacity: 0; transition: opacity .25s; pointer-events: none;
+    display: none;
   }
-  #event.shown { opacity: 1; }
-  #eventTitle { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #b99a48; margin-bottom: 6px; }
-  #eventText { white-space: pre-wrap; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e6cf; }
-  #eventTags { margin-top: 8px; font-size: 12.5px; color: #c98b5f; }
-  #warnings { margin-top: 10px; font-size: 12.5px; color: #e0a05f; }
+  #text.shown { display: block; }
+  #textLog {
+    white-space: pre-wrap; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e6cf;
+    max-height: 7.5em; overflow-y: auto;
+  }
+  #menuPrompt { margin-top: 8px; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e6cf; }
+  #menu { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  #menu:empty { display: none; }
+  #menu button { background: #2a2113; border-color: #5e4c22; color: #f0e6cf; }
+  #menu button:hover { border-color: #c9a227; }
+  #menu button kbd { color: #b99a48; font: 11.5px ui-monospace, monospace; margin-right: 6px; }
+  #menu.vertical { flex-direction: column; align-items: flex-start; }
+  #menu input { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid #5e4c22; background: #1a140a; color: #f0e6cf; }
+  #pic {
+    position: absolute; top: 64px; left: 14px; width: 320px; max-width: calc(100% - 300px);
+    image-rendering: pixelated; border: 1px solid var(--panel-edge); border-radius: 8px; background: #000;
+    display: none;
+  }
+  #pic.shown { display: block; }
+  #notes {
+    position: absolute; top: 14px; left: 120px; font-size: 12px; color: #8a93a6; max-width: calc(100% - 420px);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
 </style>
 </head>
 <body>
@@ -124,7 +145,8 @@
       <label class="note" for="levelSelect">Level</label>
       <select id="levelSelect"></select>
       <div class="row">
-        <button id="enter" class="primary">Enter the dungeon</button>
+        <button id="newGame" class="primary">New game</button>
+        <button id="enter">Explore this level</button>
       </div>
       <div id="warnings"></div>
     </div>
@@ -138,15 +160,18 @@
     <h2 id="levelName">Level</h2>
     <canvas id="map"></canvas>
     <div id="where"></div>
+    <div id="clock" style="font-size:12.5px;color:var(--ink-dim)"></div>
   </div>
-  <div id="event">
-    <div id="eventTitle"></div>
-    <div id="eventText"></div>
-    <div id="eventTags"></div>
+  <canvas id="pic"></canvas>
+  <div id="notes"></div>
+  <div id="text">
+    <div id="textLog"></div>
+    <div id="menuPrompt"></div>
+    <div id="menu"></div>
   </div>
   <div id="keys">
     <kbd>W</kbd>/<kbd>↑</kbd> forward · <kbd>S</kbd> back · <kbd>A</kbd>/<kbd>D</kbd> sidestep ·
-    <kbd>Q</kbd>/<kbd>←</kbd> <kbd>E</kbd>/<kbd>→</kbd> turn
+    <kbd>Q</kbd>/<kbd>←</kbd> <kbd>E</kbd>/<kbd>→</kbd> turn · <kbd>1</kbd>–<kbd>9</kbd> choose · <kbd>⏎</kbd> continue
   </div>
 </div>
 

@@ -131,6 +131,7 @@ export type EclArg =
   | { mem: number }   // code 0x01, read from an address
   | { word: number }  // code 0x02, a literal word
   | { str: string }   // code 0x80, a compressed string inline
+  | { strAt: number } // code 0x81, the address of a string
 
 /** Packs text six bits per character, four characters to three bytes. */
 export function compressEclString(text: string): Uint8Array {
@@ -154,6 +155,7 @@ function encodeArg(arg: EclArg): number[] {
   if ('imm' in arg) return [0x00, arg.imm & 0xff]
   if ('mem' in arg) return [0x01, arg.mem & 0xff, (arg.mem >> 8) & 0xff]
   if ('word' in arg) return [0x02, arg.word & 0xff, (arg.word >> 8) & 0xff]
+  if ('strAt' in arg) return [0x81, arg.strAt & 0xff, (arg.strAt >> 8) & 0xff]
   const packed = compressEclString(arg.str)
   return [0x80, packed.length, ...packed]
 }

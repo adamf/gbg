@@ -83,7 +83,7 @@ export interface EclProgram {
   problems: string[]
 }
 
-interface CommandSpec {
+export interface CommandSpec {
   name: string
   /** How the operands are laid out. Most commands take a fixed number. */
   shape: 'none' | 'fixed' | 'onGoto' | 'vertMenu' | 'horizMenu'
@@ -103,7 +103,7 @@ interface CommandSpec {
  * The VM's instruction set. Sizes are the operand-set counts the original decoder
  * used; the menu commands and ON GOTO read a count and then that many more.
  */
-const COMMANDS: Record<number, CommandSpec> = {
+export const ECL_COMMANDS: Record<number, CommandSpec> = {
   0x00: { name: 'EXIT', shape: 'none', flow: 'stop' },
   0x01: { name: 'GOTO', shape: 'fixed', operands: 1, flow: 'jump' },
   0x02: { name: 'GOSUB', shape: 'fixed', operands: 1, flow: 'call' },
@@ -155,7 +155,7 @@ const COMMANDS: Record<number, CommandSpec> = {
   0x30: { name: 'OR', shape: 'fixed', operands: 3 },
   0x31: { name: 'SPRITE OFF', shape: 'none' },
   0x32: { name: 'FIND ITEM', shape: 'fixed', operands: 1 },
-  0x33: { name: 'PRINT RETURN', shape: 'none', flow: 'stop' },
+  0x33: { name: 'PRINT RETURN', shape: 'none' },
   0x34: { name: 'ECL CLOCK', shape: 'fixed', operands: 2 },
   0x35: { name: 'SAVE TABLE', shape: 'fixed', operands: 3 },
   0x36: { name: 'ADD NPC', shape: 'fixed', operands: 2 },
@@ -208,6 +208,71 @@ export function decompressEclString(data: Uint8Array): string {
   return out
 }
 
+export interface OperandSets {
+  operands: EclOperand[]
+  /** Strings among the operands, in the order the VM numbers them. */
+  strings: string[]
+  /** Address of the next instruction — or, for a variable-length command, of its extra byte. */
+  next: number
+}
+
+/**
+ * Reads `count` operand sets from the instruction at `at`, exactly as the VM did:
+ * each set is a code byte and a low byte, with a third byte for the word codes, and
+ * one extra byte is consumed after the last set.
+ *
+ * `at` is the address of the opcode. For the variable part of ON GOTO and the menus,
+ * call again with `next - 1`, which is what the original's cursor step-back does.
+ */
+export function readOperandSets(
+  byteAt: (address: number) => number,
+  readString: (address: number) => string,
+  at: number,
+  count: number,
+): OperandSets {
+  const operands: EclOperand[] = []
+  const strings: string[] = []
+  let cursor = at
+
+  for (let i = 0; i < count; i++) {
+    const code = byteAt(cursor + 1)
+    const low = byteAt(cursor + 2)
+    cursor += 2
+
+    if (code === 0x01 || code === 0x02 || code === 0x03) {
+      cursor++
+      const high = byteAt(cursor)
+      operands.push({ code, word: low | (high << 8), kind: code === 0x02 ? 'literal' : 'memory' })
+    } else if (code === 0x80) {
+      // A compressed string sitting in the instruction stream.
+      const length = low
+      let text = ''
+      if (length > 0) {
+        const bytes = new Uint8Array(length)
+        for (let b = 0; b < length; b++) bytes[b] = byteAt(cursor + 1 + b)
+        cursor += length
+        text = decompressEclString(bytes)
+      }
+      strings.push(text)
+      operands.push({ code, word: low, kind: 'inline-string', text })
+    } else if (code === 0x81) {
+      cursor++
+      const high = byteAt(cursor)
+      const address = low | (high << 8)
+      const text = readString(address)
+      strings.push(text)
+      operands.push({ code, word: address, kind: 'string-pointer', text })
+    } else if (code === 0x00) {
+      operands.push({ code, word: low, kind: 'immediate' })
+    } else {
+      operands.push({ code, word: low, kind: 'unknown' })
+    }
+  }
+
+  cursor++
+  return { operands, strings, next: cursor & 0xffff }
+}
+
 /** Decodes one ECL block. Never throws: anything it cannot read becomes a problem. */
 export function decodeEcl(blockId: number, block: Uint8Array, memStart: number): EclProgram {
   // The first two bytes of the block are not part of the loaded image.
@@ -241,52 +306,11 @@ export function decodeEcl(blockId: number, block: Uint8Array, memStart: number):
   /** Cursor shared by the operand reader, mirroring the VM's own offset register. */
   let cursor = 0
 
-  /**
-   * Reads `count` operand sets starting after the opcode, exactly as the VM did:
-   * each set is a code byte and a low byte, with a third byte for the word codes,
-   * and one extra byte consumed after the last set.
-   */
+  /** Reads `count` operand sets from the instruction under the cursor and moves past them. */
   function readOperands(count: number): { operands: EclOperand[]; strings: string[] } {
-    const operands: EclOperand[] = []
-    const strings: string[] = []
-
-    for (let i = 0; i < count; i++) {
-      const code = byteAt(cursor + 1)
-      const low = byteAt(cursor + 2)
-      cursor += 2
-
-      if (code === 0x01 || code === 0x02 || code === 0x03) {
-        cursor++
-        const high = byteAt(cursor)
-        operands.push({ code, word: low | (high << 8), kind: code === 0x02 ? 'literal' : 'memory' })
-      } else if (code === 0x80) {
-        // A compressed string sitting in the instruction stream.
-        const length = low
-        let text = ''
-        if (length > 0) {
-          const bytes = new Uint8Array(length)
-          for (let b = 0; b < length; b++) bytes[b] = byteAt(cursor + 1 + b)
-          cursor += length
-          text = decompressEclString(bytes)
-        }
-        strings.push(text)
-        operands.push({ code, word: low, kind: 'inline-string', text })
-      } else if (code === 0x81) {
-        cursor++
-        const high = byteAt(cursor)
-        const address = low | (high << 8)
-        const text = readStringFromMemory(address)
-        strings.push(text)
-        operands.push({ code, word: address, kind: 'string-pointer', text })
-      } else if (code === 0x00) {
-        operands.push({ code, word: low, kind: 'immediate' })
-      } else {
-        operands.push({ code, word: low, kind: 'unknown' })
-      }
-    }
-
-    cursor++
-    return { operands, strings }
+    const read = readOperandSets(byteAt, readStringFromMemory, cursor, count)
+    cursor = read.next
+    return read
   }
 
   /**
@@ -355,7 +379,7 @@ export function decodeEcl(blockId: number, block: Uint8Array, memStart: number):
       if (!inRange(address)) break
 
       const opcode = byteAt(address)
-      const spec = COMMANDS[opcode]
+      const spec = ECL_COMMANDS[opcode]
       if (!spec) {
         problems.push(`unknown opcode 0x${opcode.toString(16).padStart(2, '0')} at 0x${address.toString(16)}`)
         break

@@ -1,12 +1,16 @@
 /**
- * Wires the page together: pick a folder, choose a level, walk around in it.
+ * Wires the page together: pick a folder, choose a level, walk around in it, and
+ * let the level's script talk back.
  */
 
-import { GameLibrary, type FileSource, type LevelEvents, type LevelRef } from '../formats/library.js'
+import { GameLibrary, type FileSource, type LevelRef } from '../formats/library.js'
+import type { Rgba } from '../formats/ega.js'
 import type { GeoMap } from '../formats/geo.js'
 import { DungeonViewer } from '../render/viewer.js'
 import type { PartyState } from '../engine/party.js'
-import { pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
+import { GameSession, type MoveCommand, type SessionUi } from '../engine/session.js'
+import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-vm.js'
+import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -24,18 +28,21 @@ const warnings = el('warnings')
 const mapCanvas = el<HTMLCanvasElement>('map')
 const viewCanvas = el<HTMLCanvasElement>('view')
 const whereLine = el('where')
+const clockLine = el('clock')
 const levelName = el('levelName')
 const dropZone = el('drop')
-const eventPanel = el('event')
-const eventTitle = el('eventTitle')
-const eventText = el('eventText')
-const eventTags = el('eventTags')
+const textPanel = el('text')
+const textLog = el('textLog')
+const menuPrompt = el('menuPrompt')
+const menuBox = el('menu')
+const picCanvas = el<HTMLCanvasElement>('pic')
+const notes = el('notes')
 
 let library: GameLibrary | undefined
 let levels: LevelRef[] = []
 let viewer: DungeonViewer | undefined
+let session: GameSession | undefined
 let currentMap: GeoMap | undefined
-let currentEvents: LevelEvents | undefined
 
 function setStatus(message: string, isError = false): void {
   statusLine.textContent = message
@@ -80,30 +87,189 @@ async function useSource(source: FileSource): Promise<void> {
   }
 }
 
+// ---- the page as the script sees it -------------------------------------------
+
+/** A menu waiting for the player, so keys can answer it. */
+let openMenu: { items: readonly string[]; choose(index: number): void } | undefined
+
+function clearMenu(): void {
+  menuBox.replaceChildren()
+  menuPrompt.textContent = ''
+  openMenu = undefined
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function drawPixels(canvas: HTMLCanvasElement, image: Rgba): void {
+  canvas.width = image.width
+  canvas.height = image.height
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.putImageData(new ImageData(new Uint8ClampedArray(image.pixels), image.width, image.height), 0, 0)
+}
+
+const pageUi: SessionUi = {
+  showLevel(map, textures, name) {
+    currentMap = map
+    levelName.textContent = name
+    if (textures.length === 0) {
+      note('No wall graphics were found for this level, so the walls are plain stone.')
+    }
+    viewer?.load(map, textures)
+  },
+
+  showParty(state) {
+    const current = viewer?.state
+    if (viewer && current && (current.row !== state.row || current.col !== state.col || current.facing !== state.facing)) {
+      viewer.setParty(state)
+    }
+    refreshHud(state)
+  },
+
+  print(text, clear) {
+    if (clear) textLog.textContent = ''
+    // The original appended text to the same line; a printed number is part of a sentence.
+    textLog.textContent += text
+    textPanel.classList.add('shown')
+    textLog.scrollTop = textLog.scrollHeight
+  },
+
+  newLine() {
+    textLog.textContent += '\n'
+  },
+
+  menu(prompt, items, layout) {
+    return new Promise((resolve) => {
+      clearMenu()
+      textPanel.classList.add('shown')
+      menuPrompt.textContent = prompt ?? ''
+      menuBox.className = layout
+      const choose = (index: number): void => {
+        clearMenu()
+        resolve(index)
+      }
+      items.forEach((item, index) => {
+        const button = document.createElement('button')
+        const key = document.createElement('kbd')
+        key.textContent = items.length === 1 ? '⏎' : String(index + 1)
+        button.append(key, item)
+        button.addEventListener('click', () => choose(index))
+        menuBox.append(button)
+      })
+      openMenu = { items, choose }
+    })
+  },
+
+  inputNumber() {
+    return askText('number').then((text) => Number.parseInt(text, 10) || 0)
+  },
+
+  inputString() {
+    return askText('text')
+  },
+
+  delay: () => wait(600),
+
+  picture(image) {
+    if (!image) {
+      picCanvas.classList.remove('shown')
+      return
+    }
+    drawPixels(picCanvas, image)
+    picCanvas.classList.add('shown')
+  },
+
+  encounter(view: EncounterView, image) {
+    if (image) {
+      drawPixels(picCanvas, image)
+      picCanvas.classList.add('shown')
+    }
+    const distance = ['right in front of you', 'a square away', 'two squares away'][view.distance] ?? ''
+    note(`encounter ${distance}`)
+  },
+
+  monsters(groups: readonly MonsterGroup[]) {
+    if (groups.length === 0) return
+    note(`monsters: ${groups.map((g) => `${g.count} × #${g.id}`).join(', ')}`)
+  },
+
+  async combat(monsters): Promise<CombatOutcome> {
+    // Combat is not built yet. Say so, and let the player decide how it went.
+    pageUi.print(`COMBAT IS NOT IN THIS BUILD. ${monsters.reduce((n, g) => n + g.count, 0)} MONSTERS FACE YOU.`, true)
+    const chosen = await pageUi.menu('How does it go?', ['THE PARTY WINS', 'THE PARTY FLEES'], 'horizontal')
+    return chosen === 0 ? 'won' : 'fled'
+  },
+
+  parlay() {
+    return pageUi.menu(undefined, ['HAUGHTY', 'SLY', 'NICE', 'MEEK', 'ABUSIVE'], 'horizontal')
+  },
+
+  note,
+}
+
+function note(message: string): void {
+  notes.textContent = message
+  console.info('[script]', message)
+}
+
+function askText(kind: 'number' | 'text'): Promise<string> {
+  return new Promise((resolve) => {
+    clearMenu()
+    textPanel.classList.add('shown')
+    const input = document.createElement('input')
+    input.type = kind === 'number' ? 'number' : 'text'
+    input.maxLength = kind === 'number' ? 5 : 40
+    const done = document.createElement('button')
+    done.textContent = 'OK'
+    const finish = (): void => {
+      const value = input.value
+      clearMenu()
+      resolve(value)
+    }
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') finish()
+      event.stopPropagation()
+    })
+    done.addEventListener('click', finish)
+    menuBox.replaceChildren(input, done)
+    input.focus()
+  })
+}
+
+// ---- entering and walking -----------------------------------------------------
+
 async function enterLevel(): Promise<void> {
   const lib = library
   const ref = levels[Number(levelSelect.value)]
   if (!lib || !ref) return
+  const session = await openPlayScreen(lib)
+  await session.enterLevel(ref)
+}
 
-  setStatus('Building the level…')
-  const map = await lib.level(ref)
-  if (!map) {
-    setStatus('That level would not load.', true)
+/** Starts from the saved game the original shipped: the party's first square in the Slums. */
+async function newGame(): Promise<void> {
+  const lib = library
+  if (!lib) return
+  const saved = await lib.savedGame('A')
+  if (!saved) {
+    setStatus('No SAVGAMA.DAT in that folder, so there is no starting game to load. Explore a level instead.', true)
     return
   }
+  const session = await openPlayScreen(lib)
+  await session.resume(saved)
+}
 
-  const wallSet = await lib.wallSetFor(ref)
-  if (wallSet.textures.length === 0) {
-    warnings.textContent =
-      'No wall graphics were found for this level, so the walls are plain stone. ' +
-      'The layout is still exactly what the data says.'
-  }
-
-  currentEvents = await lib.eventsFor(ref)
-  currentMap = map
-  levelName.textContent = ref.name
+async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
+  setStatus('Building the level…')
   startScreen.style.display = 'none'
   playScreen.style.display = 'block'
+  textLog.textContent = ''
+  clearMenu()
+  textPanel.classList.remove('shown')
+  picCanvas.classList.remove('shown')
+  notes.textContent = ''
 
   viewer?.dispose()
   viewer = new DungeonViewer(viewCanvas, {
@@ -111,9 +277,12 @@ async function enterLevel(): Promise<void> {
     onBlocked: (state) => refreshHud(state),
   })
   viewer.resize()
-  viewer.load(map, wallSet.textures)
   viewer.start()
-  refreshHud(viewer.state)
+
+  session = new GameSession(lib, pageUi)
+  // Reachable from the console in development, for poking at the running game.
+  if (import.meta.env.DEV) (window as unknown as { gbg?: unknown }).gbg = { session, library: lib }
+  return session
 }
 
 function refreshHud(state: PartyState): void {
@@ -125,45 +294,22 @@ function refreshHud(state: PartyState): void {
     `${state.row},${state.col} · ${state.facing}` +
     (cell && cell.event !== 0 ? ` · event ${cell.event}` : '')
 
-  showEvent(cell?.event ?? 0)
-}
-
-/**
- * What the level's script has to say about the square the party is standing on.
- *
- * The script is read, not run, so this is what the event *can* say — every branch of
- * it. Running it would need the party, the clock and the flags it tests against.
- */
-function showEvent(event: number): void {
-  const summary = event === 0 ? undefined : currentEvents?.summaries.get(event)
-  if (!summary || (summary.text.length === 0 && !summary.fights)) {
-    eventPanel.classList.remove('shown')
-    return
+  if (session) {
+    const { hour, minute } = session.time
+    clockLine.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
   }
-
-  eventTitle.textContent = `Event ${event}`
-  eventText.textContent = summary.text.join('\n')
-
-  // Words rather than a glyph: symbols like a crossed-swords emoji fall back to
-  // whatever the machine has, and "can start a fight" always renders.
-  const tags: string[] = []
-  if (summary.fights) tags.push('can start a fight')
-  if (summary.text.length > 1) tags.push('every branch shown')
-  eventTags.textContent = tags.join(' · ')
-
-  eventPanel.classList.add('shown')
 }
 
 function leaveLevel(): void {
-  eventPanel.classList.remove('shown')
   viewer?.stop()
+  session = undefined
   playScreen.style.display = 'none'
   startScreen.style.display = 'grid'
 }
 
 // ---- input ---------------------------------------------------------------
 
-const KEY_COMMANDS: Record<string, Parameters<DungeonViewer['command']>[0]> = {
+const KEY_COMMANDS: Record<string, MoveCommand> = {
   KeyW: 'forward', ArrowUp: 'forward',
   KeyS: 'back', ArrowDown: 'back',
   KeyA: 'left', KeyD: 'right',
@@ -174,9 +320,30 @@ const KEY_COMMANDS: Record<string, Parameters<DungeonViewer['command']>[0]> = {
 
 window.addEventListener('keydown', (event) => {
   if (playScreen.style.display !== 'block') return
+
+  if (openMenu) {
+    const menu = openMenu
+    if (event.key === 'Enter' && menu.items.length === 1) {
+      event.preventDefault()
+      menu.choose(0)
+    } else if (/^[1-9]$/.test(event.key)) {
+      const index = Number(event.key) - 1
+      if (index < menu.items.length) {
+        event.preventDefault()
+        menu.choose(index)
+      }
+    }
+    return
+  }
+
   const command = KEY_COMMANDS[event.code]
-  if (!command) return
+  if (!command || !session || session.busy) return
   event.preventDefault()
+  // One step at a time: the viewer animates each, and the session stays in step with it.
+  if (viewer?.isMoving) return
+
+  // The session moves the party and runs the script; the viewer animates the same step.
+  void session.move(command)
   viewer?.command(command)
 })
 
@@ -256,4 +423,14 @@ async function collectEntry(entry: FileSystemEntry, into: File[]): Promise<void>
 }
 
 el('enter').addEventListener('click', () => void enterLevel())
+el('newGame').addEventListener('click', () => void newGame())
 el('back').addEventListener('click', leaveLevel)
+
+// Dev server with GOLDBOX_DATA set: load that folder straight away.
+void devDataSource().then(async (dev) => {
+  if (!dev) return
+  await useSource(dev.source)
+  if (library && library.game.id !== 'unknown') {
+    setStatus(`${statusLine.textContent}  (dev folder: ${dev.folder})`)
+  }
+})

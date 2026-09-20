@@ -56,3 +56,37 @@ export async function pickDirectory(): Promise<FileSource | undefined> {
   }
   return sourceFromFiles(files)
 }
+
+/**
+ * Dev server only: the folder Vite is serving at /dev-data/ (see vite.config.ts).
+ * Returns undefined in a production build or when no folder was given.
+ */
+export async function devDataSource(): Promise<{ source: FileSource; folder: string } | undefined> {
+  if (!import.meta.env.DEV) return undefined
+  let index: { folder: string; names: string[] }
+  try {
+    const response = await fetch('/dev-data/index.json')
+    if (!response.ok) return undefined
+    index = await response.json()
+  } catch {
+    return undefined
+  }
+  const byName = new Map(index.names.map((name) => [name.toUpperCase(), name]))
+  const cache = new Map<string, Promise<Uint8Array | undefined>>()
+  const source: FileSource = {
+    list: () => [...byName.keys()],
+    read: (name) => {
+      const key = name.toUpperCase()
+      const real = byName.get(key)
+      if (!real) return Promise.resolve(undefined)
+      let pending = cache.get(key)
+      if (!pending) {
+        pending = fetch(`/dev-data/${encodeURIComponent(real)}`)
+          .then((r) => (r.ok ? r.arrayBuffer().then((b) => new Uint8Array(b)) : undefined))
+        cache.set(key, pending)
+      }
+      return pending
+    },
+  }
+  return { source, folder: index.folder }
+}

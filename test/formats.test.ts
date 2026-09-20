@@ -396,3 +396,31 @@ describe('GameLibrary', () => {
     expect(events!.summaries.get(0)!.fights).toBe(false)
   })
 })
+
+describe('saved games', () => {
+  it('splits a saved game into its area byte and three memory blocks', async () => {
+    const { readSavedGame, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH, SAVED_GAME_EXTRA } = await import('../src/formats/library.js')
+    const data = new Uint8Array(1 + SAVED_GAME_GLOBALS + SAVED_GAME_SCRATCH + SAVED_GAME_EXTRA + 100)
+    data[0] = 2
+    data[1 + 0x1e4] = 20 // last script loaded, low byte
+    data[1 + SAVED_GAME_GLOBALS + 4] = 0x34
+    data[1 + SAVED_GAME_GLOBALS + 5] = 0x12
+    const saved = readSavedGame(data)
+    expect(saved?.area).toBe(2)
+    expect(saved?.globals[0x1e4]).toBe(20)
+    expect(saved!.areaScratch[4]! | (saved!.areaScratch[5]! << 8)).toBe(0x1234)
+    expect(saved?.extra.length).toBe(SAVED_GAME_EXTRA)
+    expect(readSavedGame(new Uint8Array(10))).toBeUndefined()
+  })
+
+  it('maps a saved game into script memory two bytes per address', async () => {
+    const { EclMemory, POOL_ADDRESSES } = await import('../src/engine/ecl-vm.js')
+    const memory = new EclMemory()
+    const globals = new Uint8Array(0x800)
+    globals[0x1e4] = 20
+    globals[0x192] = 10 // hour
+    memory.loadWords(POOL_ADDRESSES.globalsBase, globals)
+    expect(memory.read(POOL_ADDRESSES.lastEclBlock)).toBe(20)
+    expect(memory.read(POOL_ADDRESSES.timeHour)).toBe(10)
+  })
+})
