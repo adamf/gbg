@@ -110,6 +110,20 @@
     display: none;
   }
   #pic.shown { display: block; }
+  #party {
+    position: absolute; top: 340px; right: 14px; width: 232px;
+    background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
+    padding: 10px 12px; backdrop-filter: blur(6px); font-size: 12.5px;
+    display: none;
+  }
+  #party.shown { display: block; }
+  #party table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #party td { padding: 2px 0; white-space: nowrap; }
+  #party td.n { overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
+  #party td.r { text-align: right; color: var(--ink-dim); padding-left: 6px; }
+  #party tr.hurt td.hp { color: #e0a05f; }
+  #party tr.down td { color: #e07a5f; }
+  #party tr.picked td.n { color: var(--accent); }
   #notes {
     position: absolute; top: 14px; left: 120px; font-size: 12px; color: #8a93a6; max-width: calc(100% - 420px);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -162,6 +176,7 @@
     <div id="where"></div>
     <div id="clock" style="font-size:12.5px;color:var(--ink-dim)"></div>
   </div>
+  <div id="party"></div>
   <canvas id="pic"></canvas>
   <div id="notes"></div>
   <div id="text">

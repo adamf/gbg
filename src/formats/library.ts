@@ -10,6 +10,7 @@
 import { readDax, type DaxArchive } from './dax.js'
 import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSummary } from './ecl.js'
 import { blankRgba, type Rgba } from './ega.js'
+import { readCharacter, readItems, type Character, type Item } from './character.js'
 import { detectGame, mapName, type GameInfo } from './detect.js'
 import { readGeoMap, type GeoMap } from './geo.js'
 import { decodeAnyImage, decodeImageBlock, isImageBlock, type DecodedImage } from './image.js'
@@ -50,11 +51,17 @@ export interface SavedGame {
   globals: Uint8Array
   areaScratch: Uint8Array
   extra: Uint8Array
+  /** Base names of the party's character files, e.g. "CHRDATA1". */
+  party: string[]
 }
 
 export const SAVED_GAME_GLOBALS = 0x800
 export const SAVED_GAME_SCRATCH = 0x800
 export const SAVED_GAME_EXTRA = 0x400
+/** Pool of Radiance keeps the script image after the blocks, then the party list. */
+const SAVED_GAME_SCRIPT = 0x1e00
+const SAVED_GAME_POSITION = 7
+const SAVED_GAME_NAME_SLOT = 0x29
 
 export function readSavedGame(data: Uint8Array): SavedGame | undefined {
   const needed = 1 + SAVED_GAME_GLOBALS + SAVED_GAME_SCRATCH + SAVED_GAME_EXTRA
@@ -65,7 +72,28 @@ export function readSavedGame(data: Uint8Array): SavedGame | undefined {
     at += n
     return slice
   }
-  return { area: data[0]!, globals: take(SAVED_GAME_GLOBALS), areaScratch: take(SAVED_GAME_SCRATCH), extra: take(SAVED_GAME_EXTRA) }
+  const saved: SavedGame = {
+    area: data[0]!,
+    globals: take(SAVED_GAME_GLOBALS),
+    areaScratch: take(SAVED_GAME_SCRATCH),
+    extra: take(SAVED_GAME_EXTRA),
+    party: [],
+  }
+
+  // After the memory blocks: the script image, the position, then a count and up to
+  // eight 41-byte slots each holding a length-prefixed file name.
+  at += SAVED_GAME_SCRIPT + SAVED_GAME_POSITION
+  const count = Math.min(8, data[at] ?? 0)
+  at++
+  for (let i = 0; i < count; i++) {
+    const slot = at + i * SAVED_GAME_NAME_SLOT
+    const length = data[slot] ?? 0
+    if (slot + 1 + length > data.length || length === 0) break
+    let name = ''
+    for (let c = 0; c < length; c++) name += String.fromCharCode(data[slot + 1 + c]!)
+    saved.party.push(name.trim().toUpperCase())
+  }
+  return saved
 }
 
 export interface WallSet {
@@ -297,6 +325,24 @@ export class GameLibrary {
       if (decoded) return decoded
     }
     return undefined
+  }
+
+  /** A character and their inventory, by the base name a saved game lists. */
+  async character(baseName: string): Promise<{ character: Character; items: Item[] } | undefined> {
+    const record = await this.source.read(`${baseName}.SAV`)
+    if (!record) return undefined
+    const inventory = await this.source.read(`${baseName}.ITM`)
+    return { character: readCharacter(record), items: inventory ? readItems(inventory) : [] }
+  }
+
+  /** Every member of a saved game's party that has a character file. */
+  async party(saved: SavedGame): Promise<{ character: Character; items: Item[] }[]> {
+    const members: { character: Character; items: Item[] }[] = []
+    for (const name of saved.party) {
+      const member = await this.character(name)
+      if (member) members.push(member)
+    }
+    return members
   }
 
   /** The saved game a new game starts from: SAVGAMA.DAT, or whichever letter is asked for. */

@@ -24,8 +24,12 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **A CLI** — `inspect` reports what a folder holds and disassembles scripts; `dump` extracts
   every picture to PNG and every level to JSON.
 
-Not here yet, in roughly the order they are needed: the party (characters, items,
-spells), monsters, combat, resting, and writing saved games. Script commands that need
+- **The party** — characters and inventories read from the CHRDATA files a saved game
+  names, with hit points, saving throws, coins and the selected-character view the
+  scripts read at 0x6B00. Damage lands; nobody fights back yet.
+
+Not here yet, in roughly the order they are needed: monsters, combat, spells, resting,
+and writing saved games. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
@@ -39,6 +43,7 @@ Plain TypeScript and three.js. Read in this order:
   - `geo.ts` the levels: walls, doors, events, and what blocks movement
   - `walldef.ts` wall graphics as grids of 8×8 tile indices
   - `ecl.ts` the scripts: instruction decoding, six-bit packed text, event tables
+  - `character.ts` party members and their inventories
   - `library.ts` ties a folder together: game, levels, wall sets, each level's script
 - `src/engine/` — the rules. `dungeon.ts` turns a level into faces and floors; `party.ts` is
   where the party stands and which way it faces; `ecl-vm.ts` runs the scripts against a

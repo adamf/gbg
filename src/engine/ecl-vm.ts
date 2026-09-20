@@ -84,6 +84,22 @@ export interface VmWorld {
   stepForward(): void
 }
 
+/** Where the selected character's fields appear to a script. */
+export const SELECTED_CHARACTER_BASE = 0x6b00
+const SELECTED_CHARACTER_SPAN = 0x340
+
+/**
+ * The selected character, as LOAD CHARACTER and WHO pick one. Offsets are from
+ * `SELECTED_CHARACTER_BASE`; a read the roster does not answer falls through to
+ * ordinary memory, which is where the original kept its per-area scratch.
+ */
+export interface CharacterHook {
+  select(index: number): void
+  name(): string
+  read(offset: number): number | undefined
+  write(offset: number, value: number): boolean
+}
+
 /** A 64K address space with the script image mapped in and the world mapped over it. */
 export class EclMemory {
   private readonly words = new Uint16Array(0x10000)
@@ -91,6 +107,7 @@ export class EclMemory {
   private image = new Uint8Array(0)
   memStart = 0
   world: VmWorld | undefined
+  character: CharacterHook | undefined
 
   /** Maps a script block in. The block's first two bytes are not part of the image. */
   loadImage(block: Uint8Array, memStart: number): void {
@@ -119,6 +136,10 @@ export class EclMemory {
         case MAPPED.cellEvent: return world.cellEvent()
       }
     }
+    if (this.character && address >= SELECTED_CHARACTER_BASE && address < SELECTED_CHARACTER_BASE + SELECTED_CHARACTER_SPAN) {
+      const value = this.character.read(address - SELECTED_CHARACTER_BASE)
+      if (value !== undefined) return value & 0xffff
+    }
     if (this.inImage(address)) return this.byteAt(address)
     return this.words[address & 0xffff]!
   }
@@ -133,6 +154,9 @@ export class EclMemory {
         case MAPPED.facingRaw: world.setFacing((value >> 1) & 3); return
       }
     }
+    if (this.character && address >= SELECTED_CHARACTER_BASE && address < SELECTED_CHARACTER_BASE + SELECTED_CHARACTER_SPAN) {
+      if (this.character.write(address - SELECTED_CHARACTER_BASE, value & 0xffff)) return
+    }
     if (this.inImage(address)) {
       this.image[(address - this.memStart) & 0xffff] = value & 0xff
       return
@@ -142,6 +166,7 @@ export class EclMemory {
 
   /** Text stored at an address: a script's own string, or one a SAVE put there. */
   readString(address: number): string {
+    if (address === SELECTED_CHARACTER_BASE && this.character) return this.character.name()
     if (this.inImage(address)) {
       let text = ''
       let at = address
@@ -453,6 +478,7 @@ export class EclVm {
       case 0x0a: { // LOAD CHARACTER
         const { operands } = this.operands(1)
         this.selectedPlayer = this.value(operands[0]) & 0x7f
+        this.memory.character?.select(this.selectedPlayer)
         return
       }
 
@@ -763,6 +789,7 @@ export class EclVm {
       case 0x39: { // WHO
         const { strings } = this.operands(1)
         this.selectedPlayer = this.host.who ? await this.host.who(strings[0] ?? '') : 0
+        this.memory.character?.select(this.selectedPlayer)
         return
       }
 

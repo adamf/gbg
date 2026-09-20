@@ -305,9 +305,9 @@ built yet.
 
 ### What the interpreter does not do yet
 
-Anything that needs a party: combat, damage, items, spells, WHO, CHECK PARTY and the
-selected-character fields at `0x6B00`. Those commands run, do nothing, and say so in
-the page's notes.
+Combat, spells, items in play, CHECK PARTY and resting. Those commands run, do nothing,
+and say so in the page's notes. DAMAGE, WHO, TREASURE, PARTY STRENGTH and the selected
+character's fields work against the party from the saved game.
 
 ---
 
@@ -323,11 +323,65 @@ state of a new game with each of its two pre-made parties. The layout is the one
 | 1 | 0x800 | game globals: addresses `0x4900`–`0x4CFF`, two bytes per address |
 | 0x801 | 0x800 | area and character scratch: addresses `0x6B00`–`0x6FFF` |
 | 0x1001 | 0x400 | more scratch: addresses `0x9700`–`0x98FF` |
-| 0x1401 | rest | the current script image and the party, not read yet |
+| 0x1401 | 0x1E00 | the current script image, not read |
+| 0x3201 | 7 | position and state bytes, not read |
+| 0x3208 | 1 + 8 × 41 | party size, then each member's file base name, length-prefixed |
 
 Among the globals, in word offsets: `0x18E`–`0x196` the clock (minutes ones, minutes
 tens, hour, day, year), `0x1E0`/`0x1E2` the party's last column and row, `0x1E4` the
 last script loaded. A new game therefore starts in the Slums, at 10:50.
+
+---
+
+## Characters — `src/formats/character.ts`
+
+Each party member is three files named after a slot: `CHRDATA1.SAV` (the record),
+`.ITM` (inventory) and `.SPC` (memorised spells, not read yet). A saved game lists the
+slots its party uses.
+
+The record is 285 bytes: the Curse of the Azure Bonds layout with a 56-byte spell book
+where Curse has 100. Offsets checked against every character Pool of Radiance ships:
+
+| offset | meaning |
+|---|---|
+| 0x00 | name, length-prefixed, up to 15 |
+| 0x10 | STR INT WIS DEX CON CHA, then exceptional strength |
+| 0x2D | to-hit, stored as `60 - THAC0` |
+| 0x2E, 0x2F | race, class (see `RACES`, `CLASSES`) |
+| 0x30 | age, `i16` |
+| 0x32 | hit points, maximum |
+| 0x33 | spell book, 56 bytes |
+| 0x6D | five saving throws |
+| 0x72, 0x73 | base movement, hit dice |
+| 0x78 | eight thief skills |
+| 0x85 | control: 0 is the player's, above that an NPC's morale |
+| 0x88 | seven `i16` coins: copper, silver, electrum, gold, platinum, gems, jewellery |
+| 0x96 | eight class levels: cleric, druid, fighter, paladin, ranger, magic-user, thief, monk |
+| 0x9E, 0xA0 | sex, alignment |
+| 0xA1 | attacks per round, doubled |
+| 0xA9 | base armour class, `60 - AC` |
+| 0xAC | experience, `i32` |
+| 0xC1 | six icon colours, then icon size |
+| 0x10C | health status |
+| 0x110 | to-hit bonus, raw: 40 is none |
+| 0x111, 0x112 | armour class front and behind, `60 - AC` |
+| 0x115, 0x117, 0x119 | current attack dice, sides, bonus |
+| 0x11B, 0x11C | hit points now, movement |
+
+An inventory is 63-byte item records: a name at 0, type at 0x2E, plus at 0x32, readied
+at 0x34, cursed at 0x36, weight (tenths of a pound, `i16`) at 0x37, count at 0x39,
+value (`i16`) at 0x3A, three affects at 0x3C.
+
+### The selected character in script memory
+
+`LOAD CHARACTER n` and `WHO` pick a party member, and the scripts then read them at
+`0x6B00` plus an offset the original's overlay answered by hand: `0x72` race, `0x73`
+class, `0x15`/`0x18` INT and CON, `0x9B` the petrification save, `0xA0` hit dice,
+`0xA5`–`0xAC` thief skills, `0xB8` control, `0xBB`/`0xBD`/`0xBF`/`0xC1`/`0xC3` copper,
+electrum, silver, gold, platinum, `0xC9` magic-user level, `0xD6` sex, `0xD8` alignment,
+`0x11B` movement, `0x2CF` charisma as a reaction score, `0x33E` party size, and `0x100`
+whether anyone is there at all: 1 standing, 0x80 down, 0 no such member. `0x6B00`
+itself reads as the name. `src/engine/roster.ts` answers these.
 
 ---
 

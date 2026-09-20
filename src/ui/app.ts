@@ -10,6 +10,8 @@ import { DungeonViewer } from '../render/viewer.js'
 import type { PartyState } from '../engine/party.js'
 import { GameSession, type MoveCommand, type SessionUi } from '../engine/session.js'
 import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-vm.js'
+import type { Member } from '../engine/roster.js'
+import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
 
@@ -36,6 +38,7 @@ const textLog = el('textLog')
 const menuPrompt = el('menuPrompt')
 const menuBox = el('menu')
 const picCanvas = el<HTMLCanvasElement>('pic')
+const partyPanel = el('party')
 const notes = el('notes')
 
 let library: GameLibrary | undefined
@@ -206,6 +209,39 @@ const pageUi: SessionUi = {
     return pageUi.menu(undefined, ['HAUGHTY', 'SLY', 'NICE', 'MEEK', 'ABUSIVE'], 'horizontal')
   },
 
+  party(members: readonly Member[], selected: number) {
+    if (members.length === 0) {
+      partyPanel.classList.remove('shown')
+      return
+    }
+    const table = document.createElement('table')
+    members.forEach(({ character: c }, index) => {
+      const row = document.createElement('tr')
+      if (index === selected) row.classList.add('picked')
+      if (c.status !== 'okay') row.classList.add('down')
+      else if (c.hpCurrent < c.hpMax) row.classList.add('hurt')
+      const cells: [string, string][] = [
+        ['n', c.name],
+        ['r', `${className(c).split('/').map((part) => part.slice(0, 2).toUpperCase()).join('/')} ${characterLevel(c)}`],
+        ['r hp', c.status === 'okay' ? `${c.hpCurrent}/${c.hpMax}` : c.status.toUpperCase()],
+        ['r', `AC ${c.ac}`],
+      ]
+      for (const [cls, text] of cells) {
+        const cell = document.createElement('td')
+        cell.className = cls
+        cell.textContent = text
+        row.append(cell)
+      }
+      table.append(row)
+    })
+    partyPanel.replaceChildren(table)
+    partyPanel.classList.add('shown')
+  },
+
+  who(prompt: string, members: readonly Member[]) {
+    return pageUi.menu(prompt || 'WHO?', members.map((m) => m.character.name), 'vertical')
+  },
+
   note,
 }
 
@@ -269,6 +305,7 @@ async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
   clearMenu()
   textPanel.classList.remove('shown')
   picCanvas.classList.remove('shown')
+  partyPanel.classList.remove('shown')
   notes.textContent = ''
 
   viewer?.dispose()

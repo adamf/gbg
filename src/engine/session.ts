@@ -18,6 +18,7 @@ import {
   type CombatOutcome, type EclHost, type EncounterView, type MonsterGroup, type VmWorld,
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
+import { Roster, type Member } from './roster.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -36,6 +37,10 @@ export interface SessionUi {
   picture(image: Rgba | undefined): void
   encounter(view: EncounterView, image: Rgba | undefined): void
   monsters(groups: readonly MonsterGroup[]): void
+  /** The party changed: someone was hurt, paid, or picked. */
+  party(members: readonly Member[], selected: number): void
+  /** Picks a party member by index. */
+  who(prompt: string, members: readonly Member[]): Promise<number>
   combat(monsters: readonly MonsterGroup[]): Promise<CombatOutcome>
   parlay(): Promise<number>
   /** Something worth telling a developer, not the player. */
@@ -46,6 +51,7 @@ const START_HOUR = 8
 
 export class GameSession {
   readonly memory = new EclMemory()
+  readonly roster = new Roster()
   private readonly vm: EclVm
   private program: EclProgram | undefined
   private blockId = 0
@@ -63,6 +69,7 @@ export class GameSession {
 
   constructor(private readonly library: GameLibrary, private readonly ui: SessionUi) {
     this.memory.world = this.world()
+    this.memory.character = this.roster.hook()
     this.vm = new EclVm(this.memory, this.host())
     this.setTime(START_HOUR, 0)
     this.memory.write(POOL_ADDRESSES.inDungeon, 1)
@@ -82,6 +89,8 @@ export class GameSession {
    */
   async resume(saved: SavedGame): Promise<void> {
     this.restore(saved)
+    this.roster.members = await this.library.party(saved)
+    this.ui.party(this.roster.members, this.roster.selected)
     const blockId = this.memory.read(POOL_ADDRESSES.lastEclBlock)
     const ref = await this.library.levelById(blockId, this.area)
     if (!ref) {
@@ -228,6 +237,7 @@ export class GameSession {
     }
     this.positionSetByScript = false
     this.ui.showParty(this.party)
+    this.ui.party(this.roster.members, this.roster.selected)
   }
 
   // ---- time --------------------------------------------------------------------
@@ -321,8 +331,9 @@ export class GameSession {
       clearMonsters: () => ui.monsters([]),
       combat: (monsters) => ui.combat(monsters),
       parlay: () => ui.parlay(),
-      who: async () => 0,
-      partyStrength: () => 20,
+      who: (prompt) => ui.who(prompt, this.roster.members),
+      partyStrength: () => this.roster.strength(),
+      partyMovement: () => this.roster.movement(),
       loadMap: async (id) => {
         const ref = await this.library.levelById(id, this.area)
         if (!ref) {
@@ -351,9 +362,16 @@ export class GameSession {
         const found = coins.filter(([, n]) => n > 0).map(([name, n]) => `${n} ${name}`)
         if (treasure.gems > 0) found.push(`${treasure.gems} gems`)
         if (treasure.jewellery > 0) found.push(`${treasure.jewellery} jewellery`)
-        ui.print(found.length > 0 ? `TREASURE: ${found.join(', ').toUpperCase()}` : 'THERE IS NO TREASURE.', false)
+        if (found.length === 0) return
+        this.roster.addTreasure(treasure)
+        ui.print(`YOU FIND ${found.join(', ').toUpperCase()}.`, false)
+        ui.party(this.roster.members, this.roster.selected)
       },
-      damage: () => ui.note('DAMAGE is not implemented: the party has no hit points yet'),
+      damage: (spec) => {
+        const lines = this.roster.applyDamage(spec, (max) => Math.floor(Math.random() * (max + 1)))
+        for (const line of lines) ui.print(`\n${line}`, false)
+        ui.party(this.roster.members, this.roster.selected)
+      },
       log: (message) => ui.note(message),
     }
   }
