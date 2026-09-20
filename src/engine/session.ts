@@ -22,6 +22,7 @@ import { Roster, type Member } from './roster.js'
 import { characterLevel, className, raceName, type Character, type Item } from '../formats/character.js'
 export type { Spell }
 import { Combat, labelMonsters, type Combatant } from './combat.js'
+import { Battle, type Fighter } from './battle.js'
 import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
@@ -53,6 +54,17 @@ export interface SessionUi {
    * fighting. Returns false to run.
    */
   combatRound(round: number, lines: readonly string[], party: readonly Combatant[], monsters: readonly Combatant[]): Promise<'fight' | 'cast' | 'run'>
+  /** Which kind of fight the player wants. */
+  battleMode(monsters: readonly Combatant[]): Promise<'tactical' | 'quick'>
+  /** Shows the battle after something happened; `lines` say what. */
+  battleUpdate(battle: Battle, lines: readonly string[]): Promise<void>
+  /**
+   * The player's turn: the page moves the fighter and strikes; `cast` runs a spell
+   * for them. Returns 'run' if the party tries to flee, otherwise when the turn ends.
+   */
+  battleTurn(battle: Battle, fighter: Fighter, cast: () => Promise<string[]>): Promise<'done' | 'run'>
+  /** The battle is over; take the map down. */
+  battleEnd(): void
   /** The party changed: someone was hurt, paid, or picked. */
   party(members: readonly Member[], selected: number): void
   /** Picks a party member by index. */
@@ -483,9 +495,13 @@ export class GameSession {
     const fighters = this.champion ? [this.champion] : this.roster.members
     this.champion = undefined
     const party = fighters.map((member) => ({ member, label: member.character.name }))
-    const combat = new Combat(party, labelMonsters(loaded), (max) => Math.floor(Math.random() * (max + 1)))
+    const monsters = labelMonsters(loaded)
     const random = (max: number) => Math.floor(Math.random() * (max + 1))
 
+    const mode = await this.ui.battleMode(monsters)
+    if (mode === 'tactical' && this.map) return this.tacticalFight(party, monsters, random)
+
+    const combat = new Combat(party, monsters, random)
     let outcome: CombatOutcome = 'won'
     let lines: string[] = [`${combat.monsters.length} FOE${combat.monsters.length === 1 ? '' : 'S'}: ${[...new Set(combat.monsters.map((m) => m.member.character.name))].join(', ')}.`]
     while (!combat.over) {
@@ -515,6 +531,54 @@ export class GameSession {
     if (outcome !== 'fled') outcome = combat.party.some((c) => c.member.character.status === 'okay') ? 'won' : 'lost'
     if (outcome === 'won') {
       const experience = combat.experience()
+      const standing = this.roster.active
+      if (experience > 0 && standing.length > 0) {
+        const each = Math.floor(experience / standing.length)
+        for (const member of standing) member.character.experience += each
+        this.ui.print(`EACH SURVIVOR GAINS ${each} EXPERIENCE.`, true)
+      }
+    }
+    if (outcome === 'lost') this.ui.print('THE PARTY HAS FALLEN.', true)
+    this.ui.party(this.roster.members, this.roster.selected)
+    if (outcome === 'won') await this.takeTreasure()
+    return outcome
+  }
+
+  /** The fight on the grid: turns until one side is done, then the same reckoning. */
+  private async tacticalFight(party: Combatant[], monsters: Combatant[], random: (max: number) => number): Promise<CombatOutcome> {
+    const battle = new Battle(this.map!, party, monsters, this.party, 1, random)
+    let outcome: CombatOutcome = 'won'
+    await this.ui.battleUpdate(battle, [`${monsters.length} FOE${monsters.length === 1 ? '' : 'S'}: ${[...new Set(monsters.map((m) => m.member.character.name))].join(', ')}.`])
+
+    while (!battle.over) {
+      const fighter = battle.current
+      if (!fighter) { battle.endTurn(); continue }
+      if (fighter.side === 'monster') {
+        const lines = battle.monsterTurn(fighter)
+        await this.ui.battleUpdate(battle, lines)
+        battle.endTurn()
+        continue
+      }
+      const result = await this.ui.battleTurn(battle, fighter, async () => {
+        const lines = await this.castInCombat(battle.combat)
+        fighter.acted = true
+        fighter.moves = 0
+        return lines
+      })
+      this.ui.party(this.roster.members, this.roster.selected)
+      if (result === 'run') {
+        const chase = Math.max(0, ...battle.combat.monstersStanding.map((m) => m.member.character.movement))
+        if (this.roster.movement().min + random(5) >= chase) { outcome = 'fled'; break }
+        await this.ui.battleUpdate(battle, ['THE PARTY CANNOT GET AWAY!'])
+      }
+      battle.endTurn()
+    }
+    this.ui.battleEnd()
+    battle.combat.finish()
+
+    if (outcome !== 'fled') outcome = party.some((c) => c.member.character.status === 'okay') ? 'won' : 'lost'
+    if (outcome === 'won') {
+      const experience = battle.combat.experience()
       const standing = this.roster.active
       if (experience > 0 && standing.length > 0) {
         const each = Math.floor(experience / standing.length)

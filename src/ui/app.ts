@@ -12,6 +12,8 @@ import { GameSession, type MoveCommand, type SessionUi, type Snapshot } from '..
 import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-vm.js'
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
+import { BATTLE_STEPS, type Battle, type Fighter } from '../engine/battle.js'
+import { drawBattle } from './battle-view.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
@@ -40,6 +42,12 @@ const menuPrompt = el('menuPrompt')
 const menuBox = el('menu')
 const picCanvas = el<HTMLCanvasElement>('pic')
 const partyPanel = el('party')
+const battlePanel = el('battle')
+const battleCanvas = el<HTMLCanvasElement>('battleMap')
+const battleActions = el('battleActions')
+
+/** The player's turn in a battle, so keys can move the fighter. */
+let openTurn: { battle: Battle; fighter: Fighter; refresh(): void } | undefined
 const continueButton = el<HTMLButtonElement>('continue')
 
 const SAVE_KEY = 'goldbox-web:save'
@@ -240,10 +248,89 @@ const pageUi: SessionUi = {
     return pageUi.menu(undefined, ['HAUGHTY', 'SLY', 'NICE', 'MEEK', 'ABUSIVE'], 'horizontal')
   },
 
+  async battleMode(monsters) {
+    pageUi.print(`${monsters.length} FOE${monsters.length === 1 ? '' : 'S'} FACE YOU.`, true)
+    const chosen = await pageUi.menu(undefined, ['FIGHT ON THE MAP', 'QUICK FIGHT'], 'horizontal')
+    return chosen === 0 ? 'tactical' : 'quick'
+  },
+
+  async battleUpdate(battle, lines) {
+    battlePanel.classList.add('shown')
+    battleActions.replaceChildren()
+    drawBattle(battleCanvas, battle, battle.current)
+    if (lines.length > 0) {
+      pageUi.print(lines.join('\n'), true)
+      await wait(Math.min(1200, 250 + lines.length * 250))
+    }
+  },
+
+  battleTurn(battle, fighter, cast) {
+    return new Promise<'done' | 'run'>((resolve) => {
+      battlePanel.classList.add('shown')
+      const label = fighter.combatant.label
+      let finished = false
+      const finish = (how: 'done' | 'run'): void => {
+        if (finished) return
+        finished = true
+        openTurn = undefined
+        battleActions.replaceChildren()
+        clearMenu()
+        resolve(how)
+      }
+      const refresh = (): void => {
+        drawBattle(battleCanvas, battle, fighter)
+        battleActions.replaceChildren()
+        const button = (key: string, text: string, enabled: boolean, onClick: () => void): void => {
+          const b = document.createElement('button')
+          const k = document.createElement('kbd')
+          k.textContent = key
+          b.append(k, text)
+          b.disabled = !enabled
+          b.addEventListener('click', onClick)
+          battleActions.append(b)
+        }
+        const near = battle.neighbours(fighter)
+        const far = battle.inRange(fighter)
+        button('F', 'ATTACK', near.length > 0 && !fighter.acted, () => void pick('WHOM?', near))
+        button('X', 'SHOOT', far.length > 0 && !fighter.acted, () => void pick('AT WHOM?', far))
+        button('C', 'CAST', fighter.combatant.member.character.memorised.length > 0 && !fighter.acted, () => {
+          void cast().then((lines) => {
+            if (lines.length > 0) pageUi.print(lines.join('\n'), true)
+            refresh()
+          })
+        })
+        button('E', 'END TURN', true, () => finish('done'))
+        button('R', 'RUN', true, () => finish('run'))
+        pageUi.print(`${label}'S TURN. ${fighter.moves} MOVE${fighter.moves === 1 ? '' : 'S'} LEFT. ARROWS MOVE, F ATTACK, X SHOOT, C CAST, E END.`, true)
+      }
+      const pick = async (prompt: string, targets: Fighter[]): Promise<void> => {
+        const at = targets.length === 1 ? 0 : await pageUi.menu(prompt, targets.map((t) => t.combatant.label), 'vertical')
+        const target = targets[at]
+        if (!target) return
+        const lines = battle.attack(fighter, target)
+        pageUi.print(lines.join('\n'), true)
+        drawBattle(battleCanvas, battle, fighter)
+        pageUi.party([], 0)
+        if (battle.over) finish('done')
+        else refresh()
+      }
+      openTurn = { battle, fighter, refresh }
+      refresh()
+    })
+  },
+
+  battleEnd() {
+    openTurn = undefined
+    battlePanel.classList.remove('shown')
+  },
+
   party(members: readonly Member[], selected: number) {
     if (members.length === 0) {
-      partyPanel.classList.remove('shown')
-      return
+      if (session) members = session.roster.members
+      if (members.length === 0) {
+        partyPanel.classList.remove('shown')
+        return
+      }
     }
     const table = document.createElement('table')
     members.forEach(({ character: c }, index) => {
@@ -410,6 +497,28 @@ const KEY_COMMANDS: Record<string, MoveCommand> = {
 
 window.addEventListener('keydown', (event) => {
   if (playScreen.style.display !== 'block') return
+
+  if (openTurn && !openMenu) {
+    const { battle, fighter, refresh } = openTurn
+    const steps: Record<string, { dx: number; dy: number }> = {
+      ArrowUp: BATTLE_STEPS.north, ArrowDown: BATTLE_STEPS.south, ArrowLeft: BATTLE_STEPS.west, ArrowRight: BATTLE_STEPS.east,
+      KeyW: BATTLE_STEPS.north, KeyS: BATTLE_STEPS.south, KeyA: BATTLE_STEPS.west, KeyD: BATTLE_STEPS.east,
+    }
+    const step = steps[event.code]
+    if (step) {
+      event.preventDefault()
+      if (battle.move(fighter, step)) refresh()
+      return
+    }
+    const hotkeys: Record<string, string> = { KeyF: 'ATTACK', KeyX: 'SHOOT', KeyC: 'CAST', KeyE: 'END TURN', KeyR: 'RUN' }
+    const wanted = hotkeys[event.code]
+    if (wanted) {
+      event.preventDefault()
+      const button = [...battleActions.querySelectorAll('button')].find((b) => b.textContent?.endsWith(wanted))
+      if (button && !button.disabled) button.click()
+      return
+    }
+  }
 
   if (openMenu) {
     const menu = openMenu

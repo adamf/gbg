@@ -66,6 +66,7 @@ export function recompute(character: Character, items: readonly Item[], types: r
       dice: weapon.type.dice,
       sides: weapon.type.sides,
       bonus: weapon.type.bonus + weapon.item.plus + str.damage,
+      range: weapon.type.range,
     }
   } else {
     character.attacks = { count: attacksByClass(character), dice: 1, sides: 2, bonus: str.damage }

@@ -28,7 +28,9 @@ one server-side, or check a `.DAX` into git is the wrong change.
   names, with hit points, saving throws, coins and the selected-character view the
   scripts read at 0x6B00. Damage lands; nobody fights back yet.
 
-- **Fights, rest and saves** — round-based combat against the area's monster records,
+- **Fights, rest and saves** — combat against the area's monster records, on a grid
+  built from the dungeon around the party (turns by initiative, movement points,
+  blows, missiles, spells, monsters that close in) or resolved quickly a round at a time,
   camping that heals and can be interrupted by the level's own encounter odds, a temple
   that heals for gold, and a save in the browser's storage with a Continue button.
 
@@ -41,8 +43,9 @@ one server-side, or check a `.DAX` into git is the wrong change.
   shops buy and sell, and items carry the names the game printed, scanned from
   START.EXE. V shows a character sheet.
 
-Not here yet, in roughly the order they are needed: the tactical combat grid, the rest
-of the spell list, the city overview map, and writing the original's save files.
+Not here yet, in roughly the order they are needed: the rest of the spell list,
+wilderness travel, the original's combat art on the battle map, and writing the
+original's save files.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. Script commands that need
 those run as no-ops and say so in the page's notes line.
@@ -63,7 +66,9 @@ Plain TypeScript and three.js. Read in this order:
 - `src/engine/` — the rules. `dungeon.ts` turns a level into faces and floors; `party.ts` is
   where the party stands and which way it faces; `ecl-vm.ts` runs the scripts against a
   host interface; `session.ts` is the game loop that ties memory, map, party and script
-  together.
+  together; `roster.ts`, `combat.ts`, `battle.ts`, `casting.ts`, `equipment.ts`,
+  `training.ts` and `treasure.ts` are the party, the blows, the grid, the spells, the
+  gear, the levels and the loot.
 - `src/render/` — three.js. `dungeon-scene.ts` builds the geometry, merged per wall graphic;
   `textures.ts` is the pixels-to-surfaces pipeline; `viewer.ts` is the camera, torch and feel.
 - `src/ui/` — the page: folder picker, level list, minimap, event text.

@@ -68,7 +68,7 @@ export interface Character {
   /** The original's health byte; see STATUSES. */
   statusByte: number
   status: Status
-  attacks: { count: number; dice: number; sides: number; bonus: number }
+  attacks: { count: number; dice: number; sides: number; bonus: number; range?: number }
   iconColours: number[]
   iconSize: number
   /** Spell ids the character knows. */

@@ -40,7 +40,7 @@ describe('equipment', () => {
     recompute(c, [item(12, true), item(57, true)], types())
     expect(c.ac).toBe(1)
     expect(c.acBehind).toBe(1)
-    expect(c.attacks).toEqual({ count: 2, dice: 1, sides: 6, bonus: 2 })
+    expect(c.attacks).toEqual({ count: 2, dice: 1, sides: 6, bonus: 2, range: 0 })
   })
 
   it('counts a shield, its plus, and puts it down for a two-handed sword', () => {
@@ -62,7 +62,7 @@ describe('equipment', () => {
     const c = fighter(18, 10)
     c.stats.strPercent = 50
     recompute(c, [item(9, true)], types())
-    expect(c.attacks).toEqual({ count: 6, dice: 1, sides: 3, bonus: 3 })
+    expect(c.attacks).toEqual({ count: 6, dice: 1, sides: 3, bonus: 3, range: 6 })
     recompute(c, [], types())
     expect(c.attacks).toEqual({ count: 2, dice: 1, sides: 2, bonus: 3 })
   })

@@ -39,6 +39,10 @@ const ui: SessionUi = {
   party: () => {},
   who: async (_prompt, members) => random(Math.max(0, members.length - 1)),
   parlay: async () => random(4),
+  battleMode: async () => 'quick',
+  battleUpdate: async () => {},
+  battleTurn: async () => 'done',
+  battleEnd: () => {},
   saved: () => {},
   note: (message) => { notes.push(message) },
 }

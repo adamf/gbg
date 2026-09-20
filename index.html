@@ -124,6 +124,16 @@
   #party tr.hurt td.hp { color: #e0a05f; }
   #party tr.down td { color: #e07a5f; }
   #party tr.picked td.n { color: var(--accent); }
+  #battle {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    background: #0d1017e6; border: 1px solid var(--panel-edge); border-radius: 12px;
+    padding: 10px; backdrop-filter: blur(6px); display: none;
+  }
+  #battle.shown { display: block; }
+  #battleMap { display: block; image-rendering: pixelated; }
+  #battleActions { display: flex; gap: 8px; margin-top: 8px; justify-content: center; flex-wrap: wrap; }
+  #battleActions button kbd { color: #b99a48; font: 11.5px ui-monospace, monospace; margin-right: 6px; }
+  #battleActions button:disabled { opacity: .4; }
   #notes {
     position: absolute; top: 14px; left: 120px; font-size: 12px; color: #8a93a6; max-width: calc(100% - 420px);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -179,6 +189,10 @@
   </div>
   <div id="party"></div>
   <canvas id="pic"></canvas>
+  <div id="battle">
+    <canvas id="battleMap"></canvas>
+    <div id="battleActions"></div>
+  </div>
   <div id="notes"></div>
   <div id="text">
     <div id="textLog"></div>
