@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Box Web</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07080c;
+    --panel: #11141c;
+    --panel-edge: #232838;
+    --ink: #e6e9f0;
+    --ink-dim: #99a1b3;
+    --accent: #c9a227;
+    --accent-ink: #1a1408;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--panel-edge);
+    background: #1a1f2b;
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button:hover { border-color: #3a4256; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  /* ---- start screen ---- */
+  #start {
+    position: absolute; inset: 0; display: grid; place-items: center; padding: 24px;
+    overflow-y: auto;
+  }
+  #start .card {
+    max-width: 620px; background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 14px; padding: 28px 30px;
+  }
+  h1 { margin: 0 0 4px; font-size: 25px; letter-spacing: -.01em; }
+  .sub { margin: 0 0 20px; color: var(--ink-dim); }
+  .note { color: var(--ink-dim); font-size: 13.5px; }
+  .note strong { color: var(--ink); font-weight: 600; }
+  #drop {
+    margin: 18px 0; padding: 22px; border: 1.5px dashed var(--panel-edge); border-radius: 12px;
+    text-align: center; transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: #16182080; }
+  #status { margin-top: 14px; min-height: 22px; font-size: 14px; }
+  #status.error { color: #e07a5f; }
+  #levels { margin-top: 18px; display: none; }
+  #levels select { width: 100%; padding: 9px; border-radius: 8px; background: #1a1f2b; color: var(--ink); border: 1px solid var(--panel-edge); font: inherit; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+
+  /* ---- play screen ---- */
+  #play { position: absolute; inset: 0; display: none; }
+  #view { width: 100%; height: 100%; display: block; }
+  #hud {
+    position: absolute; top: 14px; right: 14px; width: 232px;
+    background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
+    padding: 12px; backdrop-filter: blur(6px);
+  }
+  #hud h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  #map { width: 100%; aspect-ratio: 1; display: block; border-radius: 8px; background: #0b0d12; }
+  #where { margin-top: 8px; font-size: 12.5px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  #keys {
+    position: absolute; bottom: 14px; left: 14px;
+    background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
+    padding: 10px 14px; font-size: 12.5px; color: var(--ink-dim); backdrop-filter: blur(6px);
+  }
+  #keys kbd {
+    background: #232838; border-radius: 4px; padding: 1px 5px; color: var(--ink);
+    font: 11.5px ui-monospace, monospace;
+  }
+  #back { position: absolute; top: 14px; left: 14px; }
+  #event {
+    position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%);
+    width: min(640px, calc(100% - 300px));
+    background: #14100ae6; border: 1px solid #5e4c22; border-radius: 12px;
+    padding: 14px 18px; backdrop-filter: blur(6px);
+    opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  #event.shown { opacity: 1; }
+  #eventTitle { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #b99a48; margin-bottom: 6px; }
+  #eventText { white-space: pre-wrap; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e6cf; }
+  #eventTags { margin-top: 8px; font-size: 12.5px; color: #c98b5f; }
+  #warnings { margin-top: 10px; font-size: 12.5px; color: #e0a05f; }
+</style>
+</head>
+<body>
+
+<div id="start">
+  <div class="card">
+    <h1>Gold Box Web</h1>
+    <p class="sub">Walks the dungeons of your own SSI Gold Box games in 3D.</p>
+
+    <p class="note">
+      Point this at the folder holding a game you own — the one with <strong>POOL.CFG</strong>
+      and the <strong>.DAX</strong> files in it. The files are read in this browser tab and
+      never uploaded anywhere. No game data ships with this app.
+    </p>
+
+    <div id="drop">
+      <div class="row" style="justify-content:center">
+        <button id="pick" class="primary">Choose game folder</button>
+        <button id="pickFallback">Select files instead</button>
+      </div>
+      <p class="note" style="margin:12px 0 0">…or drop the folder here.</p>
+      <input id="fileInput" type="file" multiple webkitdirectory directory hidden>
+      <input id="filesInput" type="file" multiple hidden>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="levels">
+      <label class="note" for="levelSelect">Level</label>
+      <select id="levelSelect"></select>
+      <div class="row">
+        <button id="enter" class="primary">Enter the dungeon</button>
+      </div>
+      <div id="warnings"></div>
+    </div>
+  </div>
+</div>
+
+<div id="play">
+  <canvas id="view"></canvas>
+  <button id="back">← Levels</button>
+  <div id="hud">
+    <h2 id="levelName">Level</h2>
+    <canvas id="map"></canvas>
+    <div id="where"></div>
+  </div>
+  <div id="event">
+    <div id="eventTitle"></div>
+    <div id="eventText"></div>
+    <div id="eventTags"></div>
+  </div>
+  <div id="keys">
+    <kbd>W</kbd>/<kbd>↑</kbd> forward · <kbd>S</kbd> back · <kbd>A</kbd>/<kbd>D</kbd> sidestep ·
+    <kbd>Q</kbd>/<kbd>←</kbd> <kbd>E</kbd>/<kbd>→</kbd> turn
+  </div>
+</div>
+
+<script type="module" src="/src/ui/app.ts"></script>
+</body>
+</html>
