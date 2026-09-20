@@ -261,12 +261,35 @@ export class GameSession {
         : command === 'back' ? backward(map, this.party)
           : command === 'left' ? strafeLeft(map, this.party)
             : strafeRight(map, this.party)
-    if (!result.moved) return false
+
+    if (!result.moved) {
+      // Walking off the edge through an open side is how the party leaves an area:
+      // the script's per-step code reads the flag and loads the neighbour.
+      if (this.leavesMap(result.blocked)) {
+        this.memory.write(POOL_ADDRESSES.triedToExit, 1)
+        await this.withScript(() => this.afterStep())
+        this.memory.write(POOL_ADDRESSES.triedToExit, 0)
+        return true
+      }
+      return false
+    }
 
     this.party = result.state
     this.advanceTime(1)
     await this.withScript(() => this.afterStep())
     return true
+  }
+
+  /** True when a step in `direction` goes off the map and nothing solid is in the way. */
+  private leavesMap(direction: Direction): boolean {
+    const map = this.map
+    if (!map) return false
+    const here = cellAt(map, this.party.row, this.party.col)
+    if (!here) return false
+    const next = stepFrom(this.party.row, this.party.col, direction)
+    const offMap = next.row < 0 || next.row > 15 || next.col < 0 || next.col > 15
+    const open = here.walls[direction] === 0 || here.doors[direction] !== 0
+    return offMap && open
   }
 
   // ---- running scripts -------------------------------------------------------
@@ -299,6 +322,7 @@ export class GameSession {
     // A freshly loaded script starts with clean scratch, as the original's init did.
     this.memory.clearWords(POOL_ADDRESSES.scratchStart, POOL_ADDRESSES.scratchEnd)
     this.memory.clearWords(POOL_ADDRESSES.localsStart, POOL_ADDRESSES.localsEnd)
+    this.memory.write(POOL_ADDRESSES.triedToExit, 0)
   }
 
   /** The start entry, then the per-step pair — what the original did on every load. */
@@ -506,13 +530,12 @@ export class GameSession {
         return distance
       },
       stepForward() {
-        if (!session.map) return
-        const result = forward(session.map, session.party)
-        if (result.moved) {
-          session.party = result.state
-          session.positionSetByScript = true
-          session.ui.showParty(session.party)
-        }
+        // The original moved without looking at walls and wrapped at the edges: that
+        // wrap is how a party leaving one area arrives at the far side of the next.
+        const next = stepFrom(session.party.row, session.party.col, session.party.facing)
+        session.party = { ...session.party, row: (next.row + 16) & 0x0f, col: (next.col + 16) & 0x0f }
+        session.positionSetByScript = true
+        session.ui.showParty(session.party)
       },
     }
   }

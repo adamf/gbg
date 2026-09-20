@@ -60,6 +60,8 @@ export const POOL_ADDRESSES = {
   /** Scratch the original reset whenever a script was loaded fresh. */
   scratchStart: 0x4a00,
   scratchEnd: 0x4a20,
+  /** Set when the party walks off the map's edge; the per-step code sends them to the next area. */
+  triedToExit: 0x6dd5,
   /** Resting: a check every this many hours, and the chance of an interruption. */
   restPeriod: 0x6dd2,
   restChance: 0x6dd3,

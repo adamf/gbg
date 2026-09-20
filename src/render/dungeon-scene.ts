@@ -7,13 +7,13 @@
  * the 1988 renderer could only imply.
  *
  * Quads are merged per wall graphic, which keeps a whole level to a handful of draw
- * calls instead of one per face.
+ * calls instead of one per face. Doors are not separate geometry: the wall graphic a
+ * door side names already has the door painted in, as the original drew it.
  */
 
 import {
   BufferAttribute,
   BufferGeometry,
-  DoubleSide,
   Group,
   Mesh,
   MeshStandardMaterial,
@@ -22,7 +22,7 @@ import {
 } from 'three'
 
 import type { Rgba } from '../formats/ega.js'
-import { DoorState, type Direction, type GeoMap } from '../formats/geo.js'
+import type { Direction, GeoMap } from '../formats/geo.js'
 import { isSolid, wallFaces } from '../engine/dungeon.js'
 import { colorTexture, normalTextureFrom, stoneTexture } from './textures.js'
 
@@ -186,37 +186,6 @@ export function buildLevel(map: GeoMap, options: BuildOptions): BuiltLevel {
     group.add(new Mesh(track(builder.build()), material))
   }
 
-  // ---- doors -------------------------------------------------------------
-  const doorQuads = new Map<DoorState, QuadBuilder>()
-
-  for (const face of wallFaces(map)) {
-    if (face.door === DoorState.None) continue
-    let builder = doorQuads.get(face.door)
-    if (!builder) {
-      builder = new QuadBuilder()
-      doorQuads.set(face.door, builder)
-    }
-
-    const basis = FACE_BASIS[face.direction]
-    const { x, z } = cellToWorld(face.row, face.col)
-    const doorWidth = CELL * 0.62
-    const doorHeight = WALL_HEIGHT * 0.78
-    // Stand the panel just clear of the wall so it reads as a door in a frame.
-    const lift = 0.06
-    const origin: Vec3 = [
-      x + basis.offset[0] + basis.normal[0] * lift - basis.tangent[0] * (doorWidth / 2),
-      0,
-      z + basis.offset[2] + basis.normal[2] * lift - basis.tangent[2] * (doorWidth / 2),
-    ]
-    builder.add(origin, [basis.tangent[0] * doorWidth, 0, basis.tangent[2] * doorWidth], [0, doorHeight, 0], basis.normal)
-  }
-
-  for (const [state, builder] of doorQuads) {
-    const material = track(doorMaterial(state))
-    materials.push(material)
-    group.add(new Mesh(track(builder.build()), material))
-  }
-
   return {
     group,
     dispose() {
@@ -231,19 +200,4 @@ function tiled<T extends { wrapS: number; wrapT: number; repeat: { set(x: number
   texture.wrapT = RepeatWrapping
   texture.repeat.set(1, 1)
   return texture
-}
-
-/** Doors read at a glance: plain wood, banded iron when locked, lit when wizard-locked. */
-function doorMaterial(state: DoorState): MeshStandardMaterial {
-  switch (state) {
-    case DoorState.Locked:
-      return new MeshStandardMaterial({ color: 0x4a3b2a, roughness: 0.55, metalness: 0.6, side: DoubleSide })
-    case DoorState.WizardLocked:
-      return new MeshStandardMaterial({
-        color: 0x2a2f52, roughness: 0.4, metalness: 0.3,
-        emissive: 0x3355cc, emissiveIntensity: 0.55, side: DoubleSide,
-      })
-    default:
-      return new MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.85, metalness: 0.05, side: DoubleSide })
-  }
 }
