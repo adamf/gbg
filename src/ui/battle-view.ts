@@ -1,21 +1,18 @@
 /**
- * Draws a battle the way the original's combat screen did: a flat floor with no
- * grid, walls as bands of the game's own cobble art — a strip above a horizontal
- * edge, a strip slanting down-right for a vertical one, a pale cap along the top —
- * and outdoors, trees and rocks from the wilderness set along the boundaries. The
- * icons stand on the floor and the fighter whose turn it is wears a white box.
+ * Draws a battle the way the original's combat screen did: a window onto the arena
+ * around the fighter whose turn it is, a flat floor, and walls as whole tiles of the
+ * game's own cobble art — an east–west wall a row of them capped in pale stone, a
+ * north–south one a diagonal of them with the pale stripe running through — with the
+ * icons standing a tile each, twice their size. Outdoors the wilderness set's trees
+ * and rocks stand where the walls would.
  */
 
 import type { Battle, Fighter } from '../engine/battle.js'
 import type { Rgba } from '../formats/ega.js'
 
-export const SQUARE = 36
-/** A horizontal wall is a strip this tall above its edge. */
-const STRIP = 0.4
-/** A vertical wall is a slanted band this thick, leaning right by SHEAR over a square. */
-const THICK = 0.26
-const SHEAR = 0.5
-const CAP = 2
+export const SQUARE = 48
+export const VIEW_COLS = 13
+export const VIEW_ROWS = 9
 
 export interface BattleArt {
   tiles: Rgba[]
@@ -38,115 +35,83 @@ function toCanvas(image: Rgba): HTMLCanvasElement {
 /** A deterministic pick from the scenery, so the same square always shows the same tree. */
 function scenery(tiles: Rgba[], x: number, y: number): Rgba | undefined {
   const choices = [0, 1, 2, 3, 5, 6, 7]
-  const index = choices[(x * 7 + y * 13) % choices.length]!
-  return tiles[index]
+  return tiles[choices[(x * 7 + y * 13) % choices.length]!]
+}
+
+/** Where the window sits: centred on the fighter, kept inside the arena. */
+export function viewport(battle: Battle, focus: { x: number; y: number } | undefined): { x: number; y: number } {
+  const cx = focus?.x ?? Math.floor(battle.width / 2)
+  const cy = focus?.y ?? Math.floor(battle.height / 2)
+  return {
+    x: Math.max(0, Math.min(battle.width - VIEW_COLS, cx - Math.floor(VIEW_COLS / 2))),
+    y: Math.max(0, Math.min(battle.height - VIEW_ROWS, cy - Math.floor(VIEW_ROWS / 2))),
+  }
 }
 
 export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fighter | undefined, art?: BattleArt): void {
-  canvas.width = battle.width * SQUARE
-  canvas.height = battle.height * SQUARE
+  canvas.width = VIEW_COLS * SQUARE
+  canvas.height = VIEW_ROWS * SQUARE
   const g = canvas.getContext('2d')
   if (!g) return
   g.imageSmoothingEnabled = false
 
   const outdoors = art?.outdoors ?? false
-  const scale = SQUARE / 24
-  g.fillStyle = outdoors ? '#2d5a27' : '#5c5c5c'
+  const floor = outdoors ? '#2d5a27' : '#5c5c5c'
+  g.fillStyle = floor
   g.fillRect(0, 0, canvas.width, canvas.height)
 
-  // The cobble fill: the set's plain tile, repeated at the square's scale.
-  const cobble = !outdoors && art?.tiles[1] ? g.createPattern(toCanvas(art.tiles[1]), 'repeat') : null
-  if (cobble) cobble.setTransform(new DOMMatrix().scale(scale))
-  const fill = (): void => {
-    g.fillStyle = cobble ?? '#8a8a8a'
-  }
-  const cap = (x1: number, y1: number, x2: number, y2: number): void => {
-    g.strokeStyle = '#d8d8d8'
-    g.lineWidth = CAP
-    g.beginPath()
-    g.moveTo(x1, y1)
-    g.lineTo(x2, y2)
-    g.stroke()
-  }
+  const view = viewport(battle, active)
+  const cobble = !outdoors && art?.tiles[1] ? toCanvas(art.tiles[1]) : undefined
 
-  // Rock and, outdoors, the wild beyond the edge.
-  for (let y = 0; y < battle.height; y++) {
-    for (let x = 0; x < battle.width; x++) {
-      if (!battle.isSolid(x, y)) continue
-      const px = x * SQUARE
-      const py = y * SQUARE
+  for (let vy = 0; vy < VIEW_ROWS; vy++) {
+    for (let vx = 0; vx < VIEW_COLS; vx++) {
+      const x = view.x + vx
+      const y = view.y + vy
+      const tile = battle.tile(x, y)
+      if (tile === 'floor') continue
+      const px = vx * SQUARE
+      const py = vy * SQUARE
       if (outdoors) {
+        if (tile === 'rock') continue
         const tree = art && scenery(art.tiles, x, y)
         if (tree) g.drawImage(toCanvas(tree), px, py, SQUARE, SQUARE)
-      } else {
-        fill()
-        g.fillRect(px, py, SQUARE, SQUARE)
+        continue
       }
-    }
-  }
-
-  // Walls, each boundary once and only where floor meets them: the thin slanted band
-  // for a vertical edge, the strip above a horizontal one, both capped in pale stone.
-  const strip = SQUARE * STRIP
-  const thick = SQUARE * THICK
-  const shear = SQUARE * SHEAR
-  for (let y = 0; y < battle.height; y++) {
-    for (let x = 0; x < battle.width; x++) {
-      if (battle.isSolid(x, y)) continue
-      const px = x * SQUARE
-      const py = y * SQUARE
-      const edges: { dx: number; dy: number }[] = []
-      if (battle.hasWall(x, y, 0, -1)) edges.push({ dx: 0, dy: -1 })
-      if (battle.hasWall(x, y, 0, 1) && (y + 1 >= battle.height || battle.isSolid(x, y + 1) || !battle.hasWall(x, y + 1, 0, -1))) edges.push({ dx: 0, dy: 1 })
-      if (battle.hasWall(x, y, 1, 0)) edges.push({ dx: 1, dy: 0 })
-      if (battle.hasWall(x, y, -1, 0) && (x === 0 || battle.isSolid(x - 1, y) || !battle.hasWall(x - 1, y, 1, 0))) edges.push({ dx: -1, dy: 0 })
-
-      for (const edge of edges) {
-        if (outdoors) {
-          const tree = art && scenery(art.tiles, x + edge.dx * 3, y + edge.dy * 5)
-          if (!tree) continue
-          const tx = px + edge.dx * SQUARE * 0.5
-          const ty = py + edge.dy * SQUARE * 0.5
-          g.drawImage(toCanvas(tree), tx, ty, SQUARE, SQUARE)
-          continue
-        }
-        fill()
-        if (edge.dy !== 0) {
-          const lineY = edge.dy < 0 ? py : py + SQUARE
-          g.fillRect(px, lineY - strip, SQUARE, strip)
-          cap(px, lineY - strip, px + SQUARE, lineY - strip)
-        } else {
-          // The map is sheared a square per two rows, so the band leans half a
-          // square a row and the next row's band carries straight on from it.
-          const lineX = (edge.dx < 0 ? px : px + SQUARE) + (y % 2) * shear
-          g.beginPath()
-          g.moveTo(lineX - thick / 2, py)
-          g.lineTo(lineX + thick / 2, py)
-          g.lineTo(lineX + thick / 2 + shear, py + SQUARE)
-          g.lineTo(lineX - thick / 2 + shear, py + SQUARE)
-          g.closePath()
-          g.fill()
-          cap(lineX - thick / 2, py, lineX - thick / 2 + shear, py + SQUARE)
-        }
+      if (cobble) g.drawImage(cobble, px, py, SQUARE, SQUARE)
+      else { g.fillStyle = '#8a8a8a'; g.fillRect(px, py, SQUARE, SQUARE) }
+      // The pale stone the original painted along a wall's top edge.
+      g.strokeStyle = '#d8d8d8'
+      g.lineWidth = Math.max(3, SQUARE / 8)
+      g.beginPath()
+      if (tile === 'wall-across') {
+        g.moveTo(px, py + g.lineWidth / 2)
+        g.lineTo(px + SQUARE, py + g.lineWidth / 2)
+      } else if (tile === 'wall-along') {
+        g.moveTo(px, py)
+        g.lineTo(px + SQUARE, py + SQUARE)
       }
+      g.stroke()
     }
   }
 
   for (const f of battle.fighters) {
     const c = f.combatant.member.character
     if (c.hpCurrent <= 0 && c.status !== 'okay' && c.status !== 'asleep' && c.status !== 'held') continue
-    const px = f.x * SQUARE
-    const py = f.y * SQUARE
+    const vx = f.x - view.x
+    const vy = f.y - view.y
+    if (vx < 0 || vy < 0 || vx >= VIEW_COLS || vy >= VIEW_ROWS) continue
+    const px = vx * SQUARE
+    const py = vy * SQUARE
     const helpless = c.status === 'asleep' || c.status === 'held'
     if (f === active) {
       g.fillStyle = '#e8e8e8'
       g.fillRect(px, py, SQUARE, SQUARE)
-      g.fillStyle = outdoors ? '#2d5a27' : '#5c5c5c'
-      g.fillRect(px + 2, py + 2, SQUARE - 4, SQUARE - 4)
+      g.fillStyle = floor
+      g.fillRect(px + 3, py + 3, SQUARE - 6, SQUARE - 6)
     }
     if (f.combatant.icon) {
       g.globalAlpha = helpless ? 0.45 : 1
-      g.drawImage(toCanvas(f.combatant.icon), px + 2, py + 2, SQUARE - 4, SQUARE - 4)
+      g.drawImage(toCanvas(f.combatant.icon), px, py, SQUARE, SQUARE)
       g.globalAlpha = 1
       continue
     }

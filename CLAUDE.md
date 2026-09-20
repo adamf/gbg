@@ -30,9 +30,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   names, with hit points, saving throws, coins and the selected-character view the
   scripts read at 0x6B00. Damage lands; nobody fights back yet.
 
-- **Fights, rest and saves** — combat against the area's monster records, on a grid
-  built from the dungeon around the party (turns by initiative, movement points,
-  blows, missiles, spells, monsters that close in) or resolved quickly a round at a time,
+- **Fights, rest and saves** — combat against the area's monster records, on the
+  original's sheared arena built from the dungeon around the party (a 3×3 patch a
+  square, walls as whole tiles, eight-way moves, turns by initiative, blows, missiles,
+  spells, monsters that close in) or resolved quickly a round at a time,
   camping that heals and can be interrupted by the level's own encounter odds, a temple
   that heals for gold, and a save in the browser's storage with a Continue button.
 

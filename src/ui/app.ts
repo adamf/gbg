@@ -13,7 +13,7 @@ import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-v
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
 import { BATTLE_STEPS, type Battle, type Fighter } from '../engine/battle.js'
-import { drawBattle, type BattleArt } from './battle-view.js'
+import { drawBattle, SQUARE, viewport, type BattleArt } from './battle-view.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
@@ -53,7 +53,7 @@ const battleCanvas = el<HTMLCanvasElement>('battleMap')
 const battleActions = el('battleActions')
 
 /** The player's turn in a battle, so keys can move the fighter. */
-let openTurn: { battle: Battle; fighter: Fighter; refresh(): void } | undefined
+let openTurn: { battle: Battle; fighter: Fighter; refresh(): void; finish(how: 'done' | 'run'): void } | undefined
 let battleArt: BattleArt | undefined
 const battleInfo = el('battleInfo')
 
@@ -299,6 +299,7 @@ const pageUi: SessionUi = {
   },
 
   async battleUpdate(battle, lines) {
+    notes.textContent = ''
     battlePanel.classList.add('shown')
     battleActions.replaceChildren()
     drawBattle(battleCanvas, battle, battle.current, battleArt)
@@ -338,16 +339,16 @@ const pageUi: SessionUi = {
         const near = battle.neighbours(fighter)
         const far = battle.inRange(fighter)
         button('F', 'ATTACK', near.length > 0 && !fighter.acted, () => void pick('WHOM?', near))
-        button('X', 'SHOOT', far.length > 0 && !fighter.acted, () => void pick('AT WHOM?', far))
+        button('⇧X', 'SHOOT', far.length > 0 && !fighter.acted, () => void pick('AT WHOM?', far))
         button('C', 'CAST', fighter.combatant.member.character.memorised.length > 0 && !fighter.acted, () => {
           void cast().then((lines) => {
             if (lines.length > 0) pageUi.print(lines.join('\n'), true)
             refresh()
           })
         })
-        button('E', 'END TURN', true, () => finish('done'))
-        button('R', 'RUN', true, () => finish('run'))
-        pageUi.print(`${label}'S TURN. ${fighter.moves} MOVE${fighter.moves === 1 ? '' : 'S'} LEFT. ARROWS MOVE, F ATTACK, X SHOOT, C CAST, E END.`, true)
+        button('E', 'END TURN', true, () => (openTurn?.finish ?? finish)('done'))
+        button('R', 'RUN', true, () => (openTurn?.finish ?? finish)('run'))
+        pageUi.print(`${label}'S TURN. ${fighter.moves} MOVE${fighter.moves === 1 ? '' : 'S'} LEFT. CLICK A SQUARE OR USE THE ARROWS AND Q E Z X TO MOVE, F ATTACK, C CAST, E END.`, true)
       }
       const pick = async (prompt: string, targets: Fighter[]): Promise<void> => {
         const at = targets.length === 1 ? 0 : await pageUi.menu(prompt, targets.map((t) => t.combatant.label), 'vertical')
@@ -360,7 +361,33 @@ const pageUi: SessionUi = {
         if (battle.over) finish('done')
         else refresh()
       }
-      openTurn = { battle, fighter, refresh }
+      const onClick = (event: MouseEvent): void => {
+        if (finished || openMenu) return
+        const rect = battleCanvas.getBoundingClientRect()
+        const scaleX = battleCanvas.width / rect.width
+        const scaleY = battleCanvas.height / rect.height
+        const view = viewport(battle, fighter)
+        const x = view.x + Math.floor(((event.clientX - rect.left) * scaleX) / SQUARE)
+        const y = view.y + Math.floor(((event.clientY - rect.top) * scaleY) / SQUARE)
+        const foe = battle.at(x, y)
+        if (foe && foe.side !== fighter.side) {
+          if (battle.neighbours(fighter).includes(foe)) void pick('WHOM?', [foe])
+          else if (battle.inRange(fighter).includes(foe)) void pick('AT WHOM?', [foe])
+          return
+        }
+        const path = battle.reachable(fighter).get(`${x},${y}`)
+        if (path) {
+          battle.walk(fighter, path)
+          refresh()
+        }
+      }
+      battleCanvas.addEventListener('click', onClick)
+      const finishWas = finish
+      const finishAndDetach = (how: 'done' | 'run'): void => {
+        battleCanvas.removeEventListener('click', onClick)
+        finishWas(how)
+      }
+      openTurn = { battle, fighter, refresh, finish: finishAndDetach }
       refresh()
     })
   },
@@ -574,6 +601,8 @@ window.addEventListener('keydown', (event) => {
     const steps: Record<string, { dx: number; dy: number }> = {
       ArrowUp: BATTLE_STEPS.north, ArrowDown: BATTLE_STEPS.south, ArrowLeft: BATTLE_STEPS.west, ArrowRight: BATTLE_STEPS.east,
       KeyW: BATTLE_STEPS.north, KeyS: BATTLE_STEPS.south, KeyA: BATTLE_STEPS.west, KeyD: BATTLE_STEPS.east,
+      KeyQ: { dx: -1, dy: -1 }, KeyZ: { dx: -1, dy: 1 }, Numpad7: { dx: -1, dy: -1 }, Numpad9: { dx: 1, dy: -1 },
+      Numpad1: { dx: -1, dy: 1 }, Numpad3: { dx: 1, dy: 1 }, PageUp: { dx: 1, dy: -1 }, PageDown: { dx: 1, dy: 1 },
     }
     const step = steps[event.code]
     if (step) {
@@ -582,6 +611,12 @@ window.addEventListener('keydown', (event) => {
       return
     }
     const hotkeys: Record<string, string> = { KeyF: 'ATTACK', KeyX: 'SHOOT', KeyC: 'CAST', KeyE: 'END TURN', KeyR: 'RUN' }
+    if (event.code === 'KeyX' && !event.shiftKey) {
+      // X is a diagonal step down-right; shift-X shoots.
+      event.preventDefault()
+      if (battle.move(fighter, { dx: 1, dy: 1 })) refresh()
+      return
+    }
     const wanted = hotkeys[event.code]
     if (wanted) {
       event.preventDefault()

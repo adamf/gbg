@@ -3,22 +3,25 @@
  * initiative order with movement points, blows against neighbours, missiles down
  * the lines, and monsters that close in.
  *
- * Every dungeon square becomes a 2×2 patch of the battle map and its walls become
- * edges nobody crosses, so a fight in a corridor is fought in that corridor. The
- * map is sheared the way the original's combat screen was: each dungeon row sits one
- * square further right than the row above, so a north–south wall runs as one
- * continuous diagonal. The rules of a blow are `combat.ts`'s; this decides who is
- * where and whose turn it is.
+ * The arena is laid out the way the original's combat screen was. Every dungeon
+ * square becomes a 3×3 patch; a wall on a side turns that side's three squares into
+ * wall tiles nobody stands on. The whole thing is sheared one square right per row,
+ * so a north–south wall runs as one continuous diagonal and an east–west wall as a
+ * straight row. The rules of a blow are `combat.ts`'s; this decides who is where and
+ * whose turn it is.
  */
 
 import type { Character } from '../formats/character.js'
-import { canWalk, cellAt, DIRECTIONS, type Direction, type GeoMap } from '../formats/geo.js'
+import { canWalk, cellAt, type Direction, type GeoMap } from '../formats/geo.js'
 import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
 import { isSolid } from './dungeon.js'
 import { cast, forget, ready } from './casting.js'
 
-export const CELL_SPAN = 2
+export const CELL_SPAN = 3
 const WINDOW = 3
+const CELLS = WINDOW * 2 + 1
+
+export type Tile = 'floor' | 'rock' | 'wall-across' | 'wall-along'
 
 export interface Fighter {
   combatant: Combatant
@@ -34,6 +37,11 @@ export interface Fighter {
 export interface Step { dx: number; dy: number }
 
 const STEPS: Record<Direction, Step> = { north: { dx: 0, dy: -1 }, east: { dx: 1, dy: 0 }, south: { dx: 0, dy: 1 }, west: { dx: -1, dy: 0 } }
+/** The eight ways a fighter can step, as the original allowed. */
+export const EIGHT_STEPS: readonly Step[] = [
+  { dx: 0, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 0 }, { dx: 1, dy: 1 },
+  { dx: 0, dy: 1 }, { dx: -1, dy: 1 }, { dx: -1, dy: 0 }, { dx: -1, dy: -1 },
+]
 
 function standing(c: Character): boolean {
   return (c.status === 'okay' || c.status === 'asleep' || c.status === 'held') && c.hpCurrent > 0
@@ -43,18 +51,16 @@ function able(c: Character): boolean {
   return c.status === 'okay' && c.hpCurrent > 0
 }
 
-/** Top-left battle square of a dungeon cell in the window, shear included. */
-export function screenOf(r: number, c: number): { x: number; y: number } {
-  return { x: c * CELL_SPAN + r, y: r * CELL_SPAN }
+/** Battle square of a dungeon cell's sub-square (i, j) in the window, shear included. */
+export function screenOf(r: number, c: number, i = 1, j = 1): { x: number; y: number } {
+  const y = r * CELL_SPAN + j
+  return { x: c * CELL_SPAN + i + y, y }
 }
 
 export class Battle {
-  readonly width = (WINDOW * 2 + 1) * CELL_SPAN + WINDOW * 2 + 1
-  readonly height = (WINDOW * 2 + 1) * CELL_SPAN
-  /** Edges that cannot be crossed, as "x,y,dir" from the square being left. */
-  private readonly walls = new Set<string>()
-  /** Squares outside the level, or inside rock. */
-  private readonly solid = new Set<string>()
+  readonly width = CELLS * CELL_SPAN * 2
+  readonly height = CELLS * CELL_SPAN
+  private readonly tiles = new Map<string, Tile>()
   readonly fighters: Fighter[] = []
   readonly combat: Combat
   round = 0
@@ -77,59 +83,47 @@ export class Battle {
 
   // ---- the map --------------------------------------------------------------
 
-  private originRow = 0
-  private originCol = 0
-
   private build(map: GeoMap, at: { row: number; col: number }): void {
-    this.originRow = at.row - WINDOW
-    this.originCol = at.col - WINDOW
-    // The shear leaves a triangle of nothing at each side of the window.
-    for (let y = 0; y < this.height; y++) {
-      for (let x = 0; x < this.width; x++) this.solid.add(`${x},${y}`)
-    }
-    for (let r = 0; r <= WINDOW * 2; r++) {
-      for (let c = 0; c <= WINDOW * 2; c++) {
-        const row = this.originRow + r
-        const col = this.originCol + c
+    const originRow = at.row - WINDOW
+    const originCol = at.col - WINDOW
+    for (let r = 0; r < CELLS; r++) {
+      for (let c = 0; c < CELLS; c++) {
+        const row = originRow + r
+        const col = originCol + c
         const cell = cellAt(map, row, col)
         const rock = !cell || isSolid(cell)
-        const origin = screenOf(r, c)
         for (let j = 0; j < CELL_SPAN; j++) {
           for (let i = 0; i < CELL_SPAN; i++) {
-            const x = origin.x + i
-            const y = origin.y + j
-            if (rock) continue
-            this.solid.delete(`${x},${y}`)
-            // The edges of the patch that face another dungeon square.
-            for (const direction of DIRECTIONS) {
-              const step = STEPS[direction]
-              const edge = (direction === 'north' && j === 0) || (direction === 'south' && j === CELL_SPAN - 1)
-                || (direction === 'west' && i === 0) || (direction === 'east' && i === CELL_SPAN - 1)
-              if (edge && !canWalk(map, row, col, direction)) this.walls.add(`${x},${y},${step.dx},${step.dy}`)
+            const { x, y } = screenOf(r, c, i, j)
+            let tile: Tile = rock ? 'rock' : 'floor'
+            if (!rock) {
+              // A wall is one tile thick: a cell owns its south and east walls, and
+              // its north and west ones only where the far side is rock.
+              const north = cellAt(map, row - 1, col)
+              const west = cellAt(map, row, col - 1)
+              const northRock = !north || isSolid(north)
+              const westRock = !west || isSolid(west)
+              if ((j === 0 && northRock && !canWalk(map, row, col, 'north')) || (j === CELL_SPAN - 1 && !canWalk(map, row, col, 'south'))) tile = 'wall-across'
+              else if ((i === 0 && westRock && !canWalk(map, row, col, 'west')) || (i === CELL_SPAN - 1 && !canWalk(map, row, col, 'east'))) tile = 'wall-along'
             }
+            this.tiles.set(`${x},${y}`, tile)
           }
         }
       }
     }
   }
 
-  blocked(x: number, y: number, dx: number, dy: number): boolean {
-    const nx = x + dx
-    const ny = y + dy
-    if (nx < 0 || ny < 0 || nx >= this.width || ny >= this.height) return true
-    if (this.solid.has(`${nx},${ny}`)) return true
-    if (this.walls.has(`${x},${y},${dx},${dy}`)) return true
-    // The far side's own wall, when the two disagree.
-    if (this.walls.has(`${nx},${ny},${-dx},${-dy}`)) return true
-    return false
+  /** What is at a square; beyond the window it is rock. */
+  tile(x: number, y: number): Tile {
+    return this.tiles.get(`${x},${y}`) ?? 'rock'
   }
 
   isSolid(x: number, y: number): boolean {
-    return this.solid.has(`${x},${y}`)
+    return this.tile(x, y) !== 'floor'
   }
 
-  hasWall(x: number, y: number, dx: number, dy: number): boolean {
-    return this.walls.has(`${x},${y},${dx},${dy}`)
+  blocked(x: number, y: number, dx: number, dy: number): boolean {
+    return this.isSolid(x + dx, y + dy)
   }
 
   at(x: number, y: number): Fighter | undefined {
@@ -137,7 +131,7 @@ export class Battle {
   }
 
   private free(x: number, y: number): boolean {
-    return x >= 0 && y >= 0 && x < this.width && y < this.height && !this.solid.has(`${x},${y}`) && !this.at(x, y)
+    return !this.isSolid(x, y) && !this.at(x, y)
   }
 
   /** Puts the party on its square and the monsters ahead, as far off as they were seen. */
@@ -167,7 +161,7 @@ export class Battle {
     let monsterOrigin = partyOrigin
     for (let d = distance + 1; d >= 1; d--) {
       const candidate = screenOf(WINDOW + ahead.dy * d, WINDOW + ahead.dx * d)
-      if (!this.solid.has(`${candidate.x},${candidate.y}`)) { monsterOrigin = candidate; break }
+      if (!this.isSolid(candidate.x, candidate.y)) { monsterOrigin = candidate; break }
     }
     for (const [i, spot] of spots(monsterOrigin, monsters.length).entries()) {
       this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, moves: 0, acted: false })
@@ -209,7 +203,43 @@ export class Battle {
   // ---- actions ----------------------------------------------------------------
 
   canMove(f: Fighter, step: Step): boolean {
+    if (Math.abs(step.dx) > 1 || Math.abs(step.dy) > 1 || (step.dx === 0 && step.dy === 0)) return false
     return f.moves > 0 && !this.blocked(f.x, f.y, step.dx, step.dy) && !this.at(f.x + step.dx, f.y + step.dy)
+  }
+
+  /**
+   * The squares a fighter could reach this turn, with the first step toward each,
+   * for walking to a clicked square.
+   */
+  reachable(f: Fighter): Map<string, Step[]> {
+    const paths = new Map<string, Step[]>()
+    const queue: { x: number; y: number; path: Step[] }[] = [{ x: f.x, y: f.y, path: [] }]
+    paths.set(`${f.x},${f.y}`, [])
+    while (queue.length > 0) {
+      const here = queue.shift()!
+      if (here.path.length >= f.moves) continue
+      for (const step of EIGHT_STEPS) {
+        const nx = here.x + step.dx
+        const ny = here.y + step.dy
+        const key = `${nx},${ny}`
+        if (paths.has(key) || this.isSolid(nx, ny) || this.at(nx, ny)) continue
+        const path = [...here.path, step]
+        paths.set(key, path)
+        queue.push({ x: nx, y: ny, path })
+      }
+    }
+    paths.delete(`${f.x},${f.y}`)
+    return paths
+  }
+
+  /** Walks a whole path, stopping if something now stands in the way. */
+  walk(f: Fighter, path: readonly Step[]): number {
+    let taken = 0
+    for (const step of path) {
+      if (!this.move(f, step)) break
+      taken++
+    }
+    return taken
   }
 
   move(f: Fighter, step: Step): boolean {
@@ -222,7 +252,7 @@ export class Battle {
 
   neighbours(f: Fighter): Fighter[] {
     const foes = this.fighters.filter((o) => o.side !== f.side && standing(o.combatant.member.character))
-    return foes.filter((o) => Math.abs(o.x - f.x) <= 1 && Math.abs(o.y - f.y) <= 1 && !this.blocked(f.x, f.y, Math.sign(o.x - f.x), Math.sign(o.y - f.y)))
+    return foes.filter((o) => Math.abs(o.x - f.x) <= 1 && Math.abs(o.y - f.y) <= 1)
   }
 
   /** Foes a missile can reach: within the weapon's range, and not hemmed in by a neighbour. */
@@ -318,11 +348,10 @@ export class Battle {
     const from = new Map<string, Step | null>()
     const queue: { x: number; y: number }[] = [{ x: f.x, y: f.y }]
     from.set(key(f.x, f.y), null)
-    const steps = Object.values(STEPS)
+    const steps = EIGHT_STEPS
     while (queue.length > 0) {
       const here = queue.shift()!
       if (Math.abs(here.x - goal.x) <= 1 && Math.abs(here.y - goal.y) <= 1 && (here.x !== f.x || here.y !== f.y)) {
-        // Walk back to the first step.
         let cursor = here
         let first: Step | undefined
         for (;;) {

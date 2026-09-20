@@ -34,10 +34,15 @@ describe('the battle map', () => {
     const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0), items: [] }, count: 2 }])
     const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 0)
     const centre = screenOf(3, 3)
-    expect(battle.isSolid(centre.x, centre.y)).toBe(false)
-    expect(battle.isSolid(screenOf(3, 2).x, centre.y)).toBe(true)
+    expect(battle.tile(centre.x, centre.y)).toBe('floor')
+    expect(battle.tile(centre.x - 1, centre.y)).toBe('wall-along') // the corridor's west wall
+    expect(battle.tile(screenOf(3, 2).x, centre.y)).toBe('rock')
     expect(battle.blocked(centre.x, centre.y, -1, 0)).toBe(true)
-    expect(battle.blocked(centre.x, centre.y, 0, -1)).toBe(false)
+    // The shear: straight up on screen drifts east in the dungeon, into the corridor's wall.
+    expect(battle.blocked(centre.x, centre.y, 0, -1)).toBe(true)
+    expect(battle.blocked(centre.x, centre.y, -1, -1)).toBe(false)
+    const above = screenOf(2, 3, 1, 2)
+    expect(battle.tile(above.x, above.y)).toBe('floor') // the corridor continues north
     const hero = battle.fighters.find((f) => f.side === 'party')!
     expect([hero.x, hero.y]).toEqual([centre.x, centre.y])
     const orcs = battle.fighters.filter((f) => f.side === 'monster')
@@ -54,7 +59,9 @@ describe('the battle map', () => {
     expect(battle.current).toBe(hero)
     expect(hero.moves).toBe(6)
     expect(battle.move(hero, BATTLE_STEPS.west)).toBe(false) // corridor wall
-    expect(battle.move(hero, BATTLE_STEPS.north)).toBe(true)
+    expect(battle.move(hero, { dx: -1, dy: -1 })).toBe(true) // north along the sheared corridor
+    expect(battle.move(hero, { dx: -1, dy: -1 })).toBe(true)
+    expect(battle.reachable(hero).size).toBeGreaterThan(0)
     expect(battle.neighbours(hero)).toEqual([])
     battle.endTurn()
     expect(battle.current).toBe(orc)
@@ -75,7 +82,7 @@ describe('monsters that shoot and cast', () => {
     const { autoPrepare } = await import('../src/engine/casting.js')
     const party = [{ member: { character: fighter('HERO', 20, 7, 12), items: [] }, label: 'HERO' }]
     const archer = fighter('ARCHER', 6, 0, 6)
-    archer.attacks.range = 8
+    archer.attacks.range = 12
     const shaman = fighter('SHAMAN', 6, 0, 6)
     shaman.levels[5] = 1
     shaman.spellbook = [15]
