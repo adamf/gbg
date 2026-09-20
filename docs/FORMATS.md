@@ -303,7 +303,9 @@ The five entry points run in a fixed order: `start` when a script is loaded, the
 after every step. `preCampCheck` and `campInterrupted` bracket resting, which is not
 built yet.
 
-Two area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
+Training halls write the classes they teach as a mask to `0x6DA8` — bit 0 magic-user,
+bit 1 cleric, bit 2 thief, bit 3 fighter — and call PROGRAM 0, the original's party
+menu, where Train appeared. Two more area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
 (hours) and how likely (percent) a resting party is interrupted, and `0x6DE2`/`0x6E6C`
 set before a COMBAT with no monsters loaded mean the temple and the shop.
 

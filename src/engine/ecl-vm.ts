@@ -68,6 +68,8 @@ export const POOL_ADDRESSES = {
   /** Set by a script before COMBAT to mean a temple or a shop rather than a fight. */
   enterTemple: 0x6de2,
   enterShop: 0x6e6c,
+  /** Which classes the hall the party stands in trains; PROGRAM 0 then offers training. */
+  trainingMask: 0x6da8,
   /** The per-area scratch words the scripts use as local variables. */
   localsStart: 0x6e79,
   localsEnd: 0x6e90,

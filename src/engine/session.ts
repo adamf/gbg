@@ -26,6 +26,8 @@ import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, typ
 import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
+import { readyToTrain, train, TRAINING_COST } from './training.js'
+import { pay } from './treasure.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -218,6 +220,44 @@ export class GameSession {
     if (this.running || !this.program) return
     await this.withScript(async () => {
       if (await this.runEntry(this.program!.entryPoints.preCampCheck)) return
+      await this.campMenu()
+    })
+  }
+
+  /**
+   * The original's party menu, which PROGRAM 0 opened. Here it is the training
+   * hall's business: the hall's mask says who it teaches.
+   */
+  private async partyMenu(): Promise<void> {
+    const mask = this.memory.read(POOL_ADDRESSES.trainingMask)
+    if (mask === 0) return
+    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    for (;;) {
+      const candidates = this.roster.members
+        .map((member) => ({ member, tracks: readyToTrain(member.character, mask) }))
+        .filter((c) => c.tracks.length > 0)
+      if (candidates.length === 0) {
+        this.ui.print('NOBODY HERE IS READY TO TRAIN.', true)
+        await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+        return
+      }
+      const options = candidates.flatMap((c) => c.tracks.map((track) => `${c.member.character.name} AS ${track.toUpperCase()} — ${TRAINING_COST} GOLD`))
+      const choice = await this.ui.menu('TRAIN:', [...options, 'LEAVE'], 'vertical')
+      if (choice >= options.length) return
+      const flat = candidates.flatMap((c) => c.tracks.map((track) => ({ member: c.member, track })))
+      const { member, track } = flat[choice]!
+      if (!pay(member, TRAINING_COST)) {
+        this.ui.print(`${member.character.name} CANNOT PAY.`, true)
+        continue
+      }
+      const gained = train(member.character, track, random)
+      this.ui.print(`${member.character.name} IS NOW A LEVEL ${gained.level} ${track.toUpperCase()}, AND GAINS ${gained.hitPoints} HIT POINTS.`, true)
+      this.ui.party(this.roster.members, this.roster.selected)
+    }
+  }
+
+  private async campMenu(): Promise<void> {
+    {
       for (;;) {
         const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax)
         const choice = await this.ui.menu(
@@ -235,7 +275,7 @@ export class GameSession {
           return
         }
       }
-    })
+    }
   }
 
   /** One night's rest: a hit point back for each, unless something interrupts. Returns true if it did. */
@@ -815,8 +855,16 @@ export class GameSession {
             if (!CALL_QUIET.has(id)) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
         }
       },
-      program: (id) => {
-        const names: Record<number, string> = { 0: 'the start menu', 3: 'the party has been killed', 8: 'the game is won', 9: 'the party makes camp' }
+      program: async (id) => {
+        if (id === 0) {
+          await this.partyMenu()
+          return
+        }
+        if (id === 9) {
+          await this.campMenu()
+          return
+        }
+        const names: Record<number, string> = { 3: 'the party has been killed', 8: 'the game is won' }
         ui.note(`PROGRAM ${id}: ${names[id] ?? 'unknown'} (not implemented)`)
       },
       treasure: async (treasure) => {

@@ -35,13 +35,16 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **Spells** — memorised at camp against the book and the slots, refilled by rest,
   cast in a fight or on the road: cures, sleep, magic missile, hold, bless, shield,
   fireball and lightning. Sleepers and the held are auto-hit for double.
+- **Training** — the halls' class masks and PROGRAM 0 open a training menu; a level
+  costs the original's thousand gold and brings a hit die, a better to-hit and slots.
 - **Treasure and shops** — what TREASURE leaves on the ground can be shared and taken,
   shops buy and sell, and items carry the names the game printed, scanned from
   START.EXE. V shows a character sheet.
 
-Not here yet, in roughly the order they are needed: the tactical combat grid, training
-and levelling, the rest of the spell list, the city overview map, and writing the
-original's save files. Script commands that need
+Not here yet, in roughly the order they are needed: the tactical combat grid, the rest
+of the spell list, the city overview map, and writing the original's save files.
+`scripts/soak.ts` random-walks every level headlessly and prints what the scripts
+trip over; run it after touching the interpreter. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
