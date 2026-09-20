@@ -487,10 +487,18 @@ export class GameSession {
     }
 
     const loaded: { member: Member; count: number; picture: number }[] = []
+    const types = await this.types()
     for (const group of groups) {
       const monster = await this.library.monster(this.area, group.id)
-      if (monster) loaded.push({ member: monster, count: group.count, picture: group.picture })
-      else this.ui.note(`monster ${group.id} is not in MON${this.area}CHA.DAX`)
+      if (!monster) {
+        this.ui.note(`monster ${group.id} is not in MON${this.area}CHA.DAX`)
+        continue
+      }
+      // A bow in its hands gives the record's attack its range; its book gives it spells.
+      const bow = monster.items.find((item) => item.readied && (types[item.type]?.range ?? 0) > 0)
+      if (bow) monster.character.attacks.range = types[bow.type]!.range
+      if (canCast(monster.character)) autoPrepare(monster.character)
+      loaded.push({ member: monster, count: group.count, picture: group.picture })
     }
     if (loaded.length === 0) return this.ui.combat(groups)
 

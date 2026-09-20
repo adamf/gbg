@@ -12,6 +12,7 @@ import type { Character } from '../formats/character.js'
 import { canWalk, cellAt, DIRECTIONS, type Direction, type GeoMap } from '../formats/geo.js'
 import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
 import { isSolid } from './dungeon.js'
+import { cast, forget, ready } from './casting.js'
 
 export const CELL_SPAN = 2
 const WINDOW = 3
@@ -250,13 +251,38 @@ export class Battle {
     return lines
   }
 
-  /** A monster's turn: close on the nearest of the party and strike if it can. */
+  /**
+   * A monster's turn: a spell if it has one worth casting, a shot if it carries a
+   * bow and nobody is on it, otherwise close on the nearest of the party and strike.
+   */
   monsterTurn(f: Fighter): string[] {
     const lines: string[] = []
+    const me = f.combatant.member.character
     const target = (): Fighter | undefined => {
       const foes = this.fighters.filter((o) => o.side === 'party' && standing(o.combatant.member.character))
       return foes.sort((a, b) => (Math.abs(a.x - f.x) + Math.abs(a.y - f.y)) - (Math.abs(b.x - f.x) + Math.abs(b.y - f.y)))[0]
     }
+
+    const spells = ready(me).filter((s) => s.target === 'foe' || s.target === 'foes')
+    if (spells.length > 0) {
+      const spell = spells[this.random(spells.length - 1)]!
+      const foes = this.fighters.filter((o) => o.side === 'party' && able(o.combatant.member.character))
+      const chosen = spell.target === 'foe' ? [target()].filter((t): t is Fighter => t !== undefined) : foes.slice(0, spell.effect.count ?? 99)
+      if (chosen.length > 0) {
+        forget(me, spell.id)
+        lines.push(...cast(spell, me, chosen.map((t) => t.combatant.member.character), this.random, this.combat).lines)
+        f.acted = true
+        f.moves = 0
+        return lines
+      }
+    }
+
+    const far = this.inRange(f)
+    if (far.length > 0) {
+      lines.push(...this.attack(f, far[this.random(far.length - 1)]!))
+      return lines
+    }
+
     for (let step = 0; step < 20; step++) {
       const near = this.neighbours(f)
       if (near.length > 0) {

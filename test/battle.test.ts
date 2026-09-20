@@ -69,3 +69,34 @@ describe('the battle map', () => {
     expect(battle.over).toBe(true)
   })
 })
+
+describe('monsters that shoot and cast', () => {
+  it('shoots from range and casts a ready spell instead of walking in', async () => {
+    const { autoPrepare } = await import('../src/engine/casting.js')
+    const party = [{ member: { character: fighter('HERO', 20, 7, 12), items: [] }, label: 'HERO' }]
+    const archer = fighter('ARCHER', 6, 0, 6)
+    archer.attacks.range = 8
+    const shaman = fighter('SHAMAN', 6, 0, 6)
+    shaman.levels[5] = 1
+    shaman.spellbook = [15]
+    shaman.spellSlots = [0, 0, 0, 1, 0, 0]
+    autoPrepare(shaman)
+    const monsters = labelMonsters([
+      { member: { character: archer, items: [] }, count: 1 },
+      { member: { character: shaman, items: [] }, count: 1 },
+    ])
+    const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 2, (max) => max)
+    const hero = battle.fighters.find((f) => f.side === 'party')!
+    const a = battle.fighters.find((f) => f.combatant.label === 'ARCHER')!
+    const s = battle.fighters.find((f) => f.combatant.label === 'SHAMAN')!
+    const before = { ax: a.x, ay: a.y, sx: s.x, sy: s.y }
+    const shot = battle.monsterTurn(a)
+    expect(shot[0]).toMatch(/^ARCHER HITS HERO/)
+    expect([a.x, a.y]).toEqual([before.ax, before.ay])
+    const spell = battle.monsterTurn(s)
+    expect(spell[0]).toBe('SHAMAN CASTS MAGIC MISSILE.')
+    expect([s.x, s.y]).toEqual([before.sx, before.sy])
+    expect(hero.combatant.member.character.hpCurrent).toBeLessThan(20)
+    expect(s.combatant.member.character.memorised).toEqual([])
+  })
+})

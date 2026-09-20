@@ -189,7 +189,7 @@ export function labelMonsters(groups: readonly { member: Member; count: number; 
       seen.set(name, n)
       const label = n === 1 ? name : `${name} ${n}`
       // Each copy is its own character, named by its label so spell logs can tell them apart.
-      const character = { ...group.member.character, name: label, money: [...group.member.character.money], levels: [...group.member.character.levels], memorised: [], prepared: [] }
+      const character = { ...group.member.character, name: label, money: [...group.member.character.money], levels: [...group.member.character.levels], memorised: [...group.member.character.memorised], prepared: [...group.member.character.prepared], attacks: { ...group.member.character.attacks } }
       combatants.push({ member: { character, items: group.member.items }, label, picture: group.picture })
     }
   }
