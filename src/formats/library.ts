@@ -11,6 +11,7 @@ import { readDax, type DaxArchive } from './dax.js'
 import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSummary } from './ecl.js'
 import { blankRgba, type Rgba } from './ega.js'
 import { readCharacter, readItems, type Character, type Item } from './character.js'
+import { readItemNames, readItemTypes, type ItemType } from './items.js'
 import { detectGame, mapName, type GameInfo } from './detect.js'
 import { readGeoMap, type GeoMap } from './geo.js'
 import { decodeAnyImage, decodeImageBlock, isImageBlock, type DecodedImage } from './image.js'
@@ -112,6 +113,8 @@ export class GameLibrary {
   private readonly archives = new Map<string, Promise<DaxArchive | undefined>>()
   private readonly wallSetCache = new Map<string, Promise<Rgba[]>>()
   private readonly eclCache = new Map<string, Promise<EclProgram[]>>()
+  private names: Promise<string[]> | undefined
+  private types: Promise<ItemType[]> | undefined
   readonly game: GameInfo
 
   constructor(private readonly source: FileSource) {
@@ -344,6 +347,25 @@ export class GameLibrary {
    * A monster by record id: the area's MON*CHA.DAX holds character records, its
    * MON*ITM.DAX their gear, one block per monster.
    */
+  /** The item name list, scanned from START.EXE; empty when the folder lacks it. */
+  itemNames(): Promise<string[]> {
+    this.names ??= this.source.read('START.EXE').then((exe) => (exe ? readItemNames(exe) : []))
+    return this.names
+  }
+
+  /** The item type table from ITEMS. */
+  itemTypes(): Promise<ItemType[]> {
+    this.types ??= this.source.read('ITEMS').then((data) => (data ? readItemTypes(data) : []))
+    return this.types
+  }
+
+  /** The items in one block of an area's ITEM file: a shop's stock, or a hoard. */
+  async itemBlock(area: number, id: number): Promise<Item[]> {
+    const archive = await this.archive(`ITEM${area}.DAX`)
+    const block = archive?.blocks.find((b) => b.id === id)
+    return block ? readItems(block.data) : []
+  }
+
   async monster(area: number, id: number): Promise<{ character: Character; items: Item[] } | undefined> {
     const records = await this.archive(`MON${area}CHA.DAX`)
     const record = records?.blocks.find((b) => b.id === id && b.data.length >= 0x11d)

@@ -375,6 +375,22 @@ An inventory is 63-byte item records: a name at 0, type at 0x2E, plus at 0x32, r
 at 0x34, cursed at 0x36, weight (tenths of a pound, `i16`) at 0x37, count at 0x39,
 value (`i16`) at 0x3A, three affects at 0x3C.
 
+### Item names — `src/formats/items.ts`
+
+An item's three name numbers index one list of words, and the list is not in a data
+file: it is inline in `START.EXE` as Pascal literals between the instructions that
+print them, one-based from "Battle Axe". The reader scans them out. The game's own
+copy has five words the utility lacks — two after "Arrow", two before "Holy Symbol",
+one after "of" — found by matching every shipped item; the slots are kept empty. The
+display order is the third word, then the second, then the first: "Banded Mail",
+"Cloak of Displacement", "Sling of Seeking +2", "Broad Sword -2 Cursed". An item's
+*type* is its base word's index and indexes `ITEMS`, whose 16-byte records (after a
+two-byte header) hold slot, hands, damage dice against small and large foes, attacks
+per round and range.
+
+Shops are scripts: TREASURE with an item block loads that block of the area's
+`ITEM*.DAX` onto the ground, and a COMBAT with the shop word set sells from it.
+
 ### The selected character in script memory
 
 `LOAD CHARACTER n` and `WHO` pick a party member, and the scripts then read them at

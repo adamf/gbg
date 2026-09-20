@@ -72,8 +72,11 @@ export interface Character {
 }
 
 export interface Item {
+  /** The name as the inventory screen last drew it; `itemDisplayName` does better. */
   name: string
   type: number
+  /** Three indexes into the item name list; the middle one is a suffix like "Mail". */
+  names: [number, number, number]
   plus: number
   readied: boolean
   cursed: boolean
@@ -162,6 +165,7 @@ export function readItems(data: Uint8Array): Item[] {
     items.push({
       name: cleanItemName(pstring(data, at, 0x29)),
       type: u8(data, at + 0x2e),
+      names: [u8(data, at + 0x2f), u8(data, at + 0x30), u8(data, at + 0x31)],
       plus: (u8(data, at + 0x32) << 24) >> 24,
       readied: u8(data, at + 0x34) !== 0,
       cursed: u8(data, at + 0x36) !== 0,

@@ -422,6 +422,15 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
+  if (event.code === 'KeyV' && session && !session.busy) {
+    event.preventDefault()
+    const current = session
+    void pageUi.who('VIEW WHO?', current.roster.members).then(async (index) => {
+      pageUi.print(await current.sheet(index), true)
+    })
+    return
+  }
+
   if (event.code === 'KeyC' && session && !session.busy) {
     event.preventDefault()
     void session.camp()

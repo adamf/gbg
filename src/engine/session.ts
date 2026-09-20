@@ -19,8 +19,10 @@ import {
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
 import { Roster, type Member } from './roster.js'
-import type { Character, Item } from '../formats/character.js'
+import { characterLevel, className, raceName, type Character, type Item } from '../formats/character.js'
 import { Combat, labelMonsters, type Combatant } from './combat.js'
+import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
+import { itemDisplayName } from '../formats/items.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -68,6 +70,7 @@ export interface Snapshot {
   party: PartyState
   memory: { words: number[]; strings: [number, string][] }
   members: { character: Character; items: Item[] }[]
+  pool?: Pool
 }
 
 export class GameSession {
@@ -89,6 +92,9 @@ export class GameSession {
   private running = false
   /** Set by a duel CALL: the next fight is this member alone. */
   private champion: Member | undefined
+  /** What TREASURE left on the ground, or a shop's shelf. */
+  pool: Pool = emptyPool()
+  private itemNames: string[] = []
 
   constructor(private readonly library: GameLibrary, private readonly ui: SessionUi) {
     this.memory.world = this.world()
@@ -165,6 +171,7 @@ export class GameSession {
   async load(snapshot: Snapshot): Promise<void> {
     this.memory.restore(snapshot.memory)
     this.roster.members = snapshot.members.map((m) => ({ character: m.character, items: m.items }))
+    this.pool = snapshot.pool ?? emptyPool()
     this.area = snapshot.area
     this.party = snapshot.party
     this.positionSetByScript = true
@@ -194,6 +201,7 @@ export class GameSession {
       party: { ...this.party },
       memory: this.memory.snapshot(),
       members: this.roster.members.map((m) => ({ character: m.character, items: m.items })),
+      pool: this.pool,
     }
   }
 
@@ -386,8 +394,9 @@ export class GameSession {
         await this.temple()
       } else if (this.memory.read(POOL_ADDRESSES.enterShop) === 1) {
         this.memory.write(POOL_ADDRESSES.enterShop, 0)
-        this.ui.print('THE SHOP IS NOT OPEN IN THIS BUILD.', true)
-        await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+        await this.shop()
+      } else {
+        await this.takeTreasure()
       }
       return 'won'
     }
@@ -438,7 +447,86 @@ export class GameSession {
     }
     if (outcome === 'lost') this.ui.print('THE PARTY HAS FALLEN.', true)
     this.ui.party(this.roster.members, this.roster.selected)
+    if (outcome === 'won') await this.takeTreasure()
     return outcome
+  }
+
+  private async names(): Promise<string[]> {
+    if (this.itemNames.length === 0) this.itemNames = await this.library.itemNames()
+    return this.itemNames
+  }
+
+  /** What is on the ground: share the coins, pick up the items, or walk away. */
+  private async takeTreasure(): Promise<void> {
+    if (poolIsEmpty(this.pool)) return
+    const names = await this.names()
+    for (;;) {
+      const coins = describeCoins(this.pool.coins)
+      const items = this.pool.items.map((item) => `TAKE ${itemDisplayName(item, names)}`)
+      const options = [...(coins ? [`SHARE ${coins}`] : []), ...items, 'LEAVE THE REST']
+      const choice = await this.ui.menu('ON THE GROUND:', options, 'vertical')
+      if (choice === options.length - 1) return
+      if (coins && choice === 0) {
+        shareCoins(this.pool, this.roster.active.length > 0 ? this.roster.active : this.roster.members)
+      } else {
+        const index = coins ? choice - 1 : choice
+        const who = await this.ui.who('WHO TAKES IT?', this.roster.members)
+        const member = this.roster.members[who]
+        if (member) take(this.pool, index, member)
+      }
+      this.ui.party(this.roster.members, this.roster.selected)
+      if (poolIsEmpty(this.pool)) return
+    }
+  }
+
+  /** A shop sells what the script put on the shelf and buys the party's things for half. */
+  private async shop(): Promise<void> {
+    const names = await this.names()
+    const shelf = [...this.pool.items]
+    this.pool.items = []
+    for (;;) {
+      const choice = await this.ui.menu('THE SHOP.', ['BUY', 'SELL', 'LEAVE'], 'horizontal')
+      if (choice === 2) return
+      if (choice === 0) {
+        if (shelf.length === 0) {
+          this.ui.print('THERE IS NOTHING FOR SALE.', true)
+          continue
+        }
+        const pick = await this.ui.menu('FOR SALE:', [...shelf.map((item) => `${itemDisplayName(item, names)} — ${item.value} GOLD`), 'NOTHING'], 'vertical')
+        const item = shelf[pick]
+        if (!item) continue
+        const who = await this.ui.who('WHO BUYS IT?', this.roster.members)
+        const member = this.roster.members[who]
+        if (!member) continue
+        this.ui.print(buy(member, item) ? `${member.character.name} BUYS THE ${itemDisplayName(item, names).toUpperCase()}.` : `${member.character.name} CANNOT AFFORD IT.`, true)
+      } else {
+        const who = await this.ui.who('WHO SELLS?', this.roster.members)
+        const member = this.roster.members[who]
+        if (!member || member.items.length === 0) continue
+        const pick = await this.ui.menu('SELL WHAT?', [...member.items.map((item) => `${itemDisplayName(item, names)} — ${Math.floor(item.value / 2)} GOLD`), 'NOTHING'], 'vertical')
+        if (pick >= member.items.length) continue
+        const price = sell(member, pick)
+        this.ui.print(`THE SHOPKEEPER PAYS ${price} GOLD.`, true)
+      }
+      this.ui.party(this.roster.members, this.roster.selected)
+    }
+  }
+
+  /** A member's sheet, for the page to show on request. */
+  async sheet(index: number): Promise<string> {
+    const member = this.roster.members[index]
+    if (!member) return ''
+    const names = await this.names()
+    const c = member.character
+    const lines = [
+      `${c.name}  ${['MALE', 'FEMALE'][c.sex] ?? ''}  ${raceName(c).toUpperCase()}  ${className(c).toUpperCase()}`,
+      `LEVEL ${characterLevel(c)}   EXP ${c.experience}   AGE ${c.age}`,
+      `STR ${c.stats.str}${c.stats.strPercent ? `/${c.stats.strPercent}` : ''}  INT ${c.stats.int}  WIS ${c.stats.wis}  DEX ${c.stats.dex}  CON ${c.stats.con}  CHA ${c.stats.cha}`,
+      `HP ${c.hpCurrent}/${c.hpMax}   AC ${c.ac}   THAC0 ${c.thac0}   MOVE ${c.movement}   ${c.status.toUpperCase()}`,
+      `${describeCoins(c.money) || 'NO COINS'}`,
+      ...member.items.map((item) => `${item.readied ? '* ' : '  '}${itemDisplayName(item, names)}`),
+    ]
+    return lines.join('\n')
   }
 
   /** A temple heals the wounded for gold, one hit point a coin, the way clerics charge. */
@@ -605,15 +693,14 @@ export class GameSession {
         const names: Record<number, string> = { 0: 'the start menu', 3: 'the party has been killed', 8: 'the game is won', 9: 'the party makes camp' }
         ui.note(`PROGRAM ${id}: ${names[id] ?? 'unknown'} (not implemented)`)
       },
-      treasure: (treasure) => {
-        const coins = [['copper', treasure.copper], ['silver', treasure.silver], ['electrum', treasure.electrum], ['gold', treasure.gold], ['platinum', treasure.platinum]] as const
-        const found = coins.filter(([, n]) => n > 0).map(([name, n]) => `${n} ${name}`)
-        if (treasure.gems > 0) found.push(`${treasure.gems} gems`)
-        if (treasure.jewellery > 0) found.push(`${treasure.jewellery} jewellery`)
-        if (found.length === 0) return
-        this.roster.addTreasure(treasure)
-        ui.print(`YOU FIND ${found.join(', ').toUpperCase()}.`, false)
-        ui.party(this.roster.members, this.roster.selected)
+      treasure: async (treasure) => {
+        const add = [treasure.copper, treasure.silver, treasure.electrum, treasure.gold, treasure.platinum, treasure.gems, treasure.jewellery]
+        for (let i = 0; i < add.length; i++) this.pool.coins[i] = (this.pool.coins[i] ?? 0) + add[i]!
+        if (treasure.items < 0x80) {
+          this.pool.items.push(...(await this.library.itemBlock(this.area, treasure.items)))
+        } else if (treasure.items !== 0xff) {
+          ui.note(`${treasure.items - 0x80} random items are not generated yet`)
+        }
       },
       damage: (spec) => {
         const lines = this.roster.applyDamage(spec, (max) => Math.floor(Math.random() * (max + 1)))
