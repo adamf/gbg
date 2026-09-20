@@ -9,12 +9,17 @@
  */
 
 import type { Character } from '../formats/character.js'
+import type { Rgba } from '../formats/ega.js'
 import type { Member } from './roster.js'
 
 export interface Combatant {
   member: Member
   /** Monsters carry their group's number so the log can tell two orcs apart. */
   label: string
+  /** The combat icon, when the art could be found. */
+  icon?: Rgba
+  /** For monsters: the CPIC block their icon is in. */
+  picture?: number
 }
 
 export type Random = (max: number) => number
@@ -174,7 +179,7 @@ export class Combat {
 }
 
 /** Labels a group of monsters "ORC", "ORC 2", "ORC 3", so the log reads. */
-export function labelMonsters(groups: readonly { member: Member; count: number }[]): Combatant[] {
+export function labelMonsters(groups: readonly { member: Member; count: number; picture?: number }[]): Combatant[] {
   const combatants: Combatant[] = []
   const seen = new Map<string, number>()
   for (const group of groups) {
@@ -185,7 +190,7 @@ export function labelMonsters(groups: readonly { member: Member; count: number }
       const label = n === 1 ? name : `${name} ${n}`
       // Each copy is its own character, named by its label so spell logs can tell them apart.
       const character = { ...group.member.character, name: label, money: [...group.member.character.money], levels: [...group.member.character.levels], memorised: [], prepared: [] }
-      combatants.push({ member: { character, items: group.member.items }, label })
+      combatants.push({ member: { character, items: group.member.items }, label, picture: group.picture })
     }
   }
   return combatants

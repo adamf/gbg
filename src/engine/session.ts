@@ -484,22 +484,31 @@ export class GameSession {
       return 'won'
     }
 
-    const loaded: { member: Member; count: number }[] = []
+    const loaded: { member: Member; count: number; picture: number }[] = []
     for (const group of groups) {
       const monster = await this.library.monster(this.area, group.id)
-      if (monster) loaded.push({ member: monster, count: group.count })
+      if (monster) loaded.push({ member: monster, count: group.count, picture: group.picture })
       else this.ui.note(`monster ${group.id} is not in MON${this.area}CHA.DAX`)
     }
     if (loaded.length === 0) return this.ui.combat(groups)
 
     const fighters = this.champion ? [this.champion] : this.roster.members
     this.champion = undefined
-    const party = fighters.map((member) => ({ member, label: member.character.name }))
+    const party: Combatant[] = fighters.map((member) => ({ member, label: member.character.name }))
     const monsters = labelMonsters(loaded)
     const random = (max: number) => Math.floor(Math.random() * (max + 1))
 
     const mode = await this.ui.battleMode(monsters)
-    if (mode === 'tactical' && this.map) return this.tacticalFight(party, monsters, random)
+    if (mode === 'tactical' && this.map) {
+      for (const c of party) c.icon = await this.library.partyIcon(c.member.character)
+      const icons = new Map<number, Rgba | undefined>()
+      for (const c of monsters) {
+        if (c.picture === undefined) continue
+        if (!icons.has(c.picture)) icons.set(c.picture, await this.library.combatIcon(this.area, c.picture))
+        c.icon = icons.get(c.picture)
+      }
+      return this.tacticalFight(party, monsters, random)
+    }
 
     const combat = new Combat(party, monsters, random)
     let outcome: CombatOutcome = 'won'

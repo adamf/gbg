@@ -69,8 +69,11 @@ export interface Character {
   statusByte: number
   status: Status
   attacks: { count: number; dice: number; sides: number; bonus: number; range?: number }
+  /** Old-to-new colour pairs, a nibble each, applied to the combat icon. */
   iconColours: number[]
   iconSize: number
+  /** COMSPR block holding the combat icon. */
+  icon: number
   /** Spell ids the character knows. */
   spellbook: number[]
   /** Spell slots per level: three cleric, then three magic-user. */
@@ -159,6 +162,7 @@ export function readCharacter(data: Uint8Array): Character {
     attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: u8(data, 0x119) },
     iconColours,
     iconSize: u8(data, 0xc7),
+    icon: u8(data, 0xc8),
     spellbook,
     spellSlots,
     memorised: [],

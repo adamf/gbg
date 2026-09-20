@@ -9,7 +9,7 @@
 
 import { readDax, type DaxArchive } from './dax.js'
 import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSummary } from './ecl.js'
-import { blankRgba, type Rgba } from './ega.js'
+import { blankRgba, recolour, type Rgba } from './ega.js'
 import { readCharacter, readItems, type Character, type Item } from './character.js'
 import { readItemNames, readItemTypes, type ItemType } from './items.js'
 import { readSpellNames } from './spells.js'
@@ -325,6 +325,17 @@ export class GameLibrary {
    */
   async sprite(area: number, id: number): Promise<DecodedImage | undefined> {
     return this.artBlock(`SPRIT${area}.DAX`, id)
+  }
+
+  /** A monster's combat icon: the area's CPIC block the script named. */
+  async combatIcon(area: number, id: number): Promise<Rgba | undefined> {
+    return (await this.artBlock(`CPIC${area}.DAX`, id))?.frames[0]
+  }
+
+  /** A party member's combat icon: their COMSPR block in their colours. */
+  async partyIcon(character: Character): Promise<Rgba | undefined> {
+    const frame = (await this.artBlock('COMSPR.DAX', character.icon))?.frames[0]
+    return frame ? recolour(frame, character.iconColours) : undefined
   }
 
   private async artBlock(file: string, id: number): Promise<DecodedImage | undefined> {

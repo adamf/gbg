@@ -119,3 +119,25 @@ export function blit(dst: Rgba, src: Rgba, x: number, y: number): void {
     }
   }
 }
+
+/**
+ * Swaps colours in a decoded image the way the combat screen coloured a party
+ * member's icon: each pair is an old EGA index in the high nibble and the new one in
+ * the low. Pixels are matched back to the palette by their RGB.
+ */
+export function recolour(image: Rgba, pairs: readonly number[]): Rgba {
+  const swap = new Map<number, number>()
+  for (const pair of pairs) swap.set(pair >> 4, pair & 0x0f)
+  const out = new Uint8ClampedArray(image.pixels)
+  for (let i = 0; i < out.length; i += 4) {
+    if (out[i + 3] === 0) continue
+    const index = EGA_PALETTE.findIndex(([r, g, b]) => r === out[i] && g === out[i + 1] && b === out[i + 2])
+    const to = index >= 0 ? swap.get(index) : undefined
+    if (to === undefined) continue
+    const [r, g, b] = EGA_PALETTE[to]!
+    out[i] = r
+    out[i + 1] = g
+    out[i + 2] = b
+  }
+  return { width: image.width, height: image.height, pixels: out }
+}
