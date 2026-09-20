@@ -332,9 +332,10 @@ export class GameLibrary {
     return (await this.artBlock(`CPIC${area}.DAX`, id))?.frames[0]
   }
 
-  /** A party member's combat icon: their COMSPR block in their colours. */
+  /** A party member's combat icon: their ICON block, recoloured in their colours. */
   async partyIcon(character: Character): Promise<Rgba | undefined> {
-    const frame = (await this.artBlock('COMSPR.DAX', character.icon))?.frames[0]
+    const frame = (await this.artBlock('ICON.DAX', character.icon))?.frames[0]
+      ?? (await this.artBlock('COMSPR.DAX', character.icon))?.frames[0]
     return frame ? recolour(frame, character.iconColours) : undefined
   }
 

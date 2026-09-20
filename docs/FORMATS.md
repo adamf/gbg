@@ -366,7 +366,8 @@ where Curse has 100. Offsets checked against every character Pool of Radiance sh
 | 0xA1 | attacks per round, doubled |
 | 0xA9 | base armour class, `60 - AC` |
 | 0xAC | experience, `i32` |
-| 0xC1 | six icon colours, then icon size |
+| 0xC0 | combat icon: a block of ICON.DAX |
+| 0xC1 | six colour swaps for that icon, old nibble high, new nibble low; then icon size |
 | 0x10C | health status |
 | 0x110 | to-hit bonus, raw: 40 is none |
 | 0x111, 0x112 | armour class front and behind, `60 - AC` |
