@@ -335,6 +335,19 @@ export class GameLibrary {
     return { character: readCharacter(record), items: inventory ? readItems(inventory) : [] }
   }
 
+  /**
+   * A monster by record id: the area's MON*CHA.DAX holds character records, its
+   * MON*ITM.DAX their gear, one block per monster.
+   */
+  async monster(area: number, id: number): Promise<{ character: Character; items: Item[] } | undefined> {
+    const records = await this.archive(`MON${area}CHA.DAX`)
+    const record = records?.blocks.find((b) => b.id === id && b.data.length >= 0x11d)
+    if (!record) return undefined
+    const gear = await this.archive(`MON${area}ITM.DAX`)
+    const own = gear?.blocks.find((b) => b.id === id)
+    return { character: readCharacter(record.data), items: own ? readItems(own.data) : [] }
+  }
+
   /** Every member of a saved game's party that has a character file. */
   async party(saved: SavedGame): Promise<{ character: Character; items: Item[] }[]> {
     const members: { character: Character; items: Item[] }[] = []

@@ -145,12 +145,22 @@ export function readCharacter(data: Uint8Array): Character {
   }
 }
 
+/**
+ * The name field is whatever the inventory screen last drew: a "Yes"/"No" readied
+ * column, a count, and sometimes the last word again. This gets the name back out.
+ */
+export function cleanItemName(cached: string): string {
+  const words = cached.trim().split(/\s+/).filter((w) => w !== 'Yes' && w !== 'No')
+  if (words.length > 1 && words[words.length - 1] === words[words.length - 2]) words.pop()
+  return words.join(' ')
+}
+
 /** Reads an inventory file: item records back to back. */
 export function readItems(data: Uint8Array): Item[] {
   const items: Item[] = []
   for (let at = 0; at + ITEM_RECORD_SIZE <= data.length; at += ITEM_RECORD_SIZE) {
     items.push({
-      name: pstring(data, at, 0x29).trim(),
+      name: cleanItemName(pstring(data, at, 0x29)),
       type: u8(data, at + 0x2e),
       plus: (u8(data, at + 0x32) << 24) >> 24,
       readied: u8(data, at + 0x34) !== 0,

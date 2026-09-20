@@ -19,6 +19,7 @@ import {
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
 import { Roster, type Member } from './roster.js'
+import { Combat, labelMonsters, type Combatant } from './combat.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -37,6 +38,11 @@ export interface SessionUi {
   picture(image: Rgba | undefined): void
   encounter(view: EncounterView, image: Rgba | undefined): void
   monsters(groups: readonly MonsterGroup[]): void
+  /**
+   * A round of combat has been resolved; shows the lines and asks whether to keep
+   * fighting. Returns false to run.
+   */
+  combatRound(round: number, lines: readonly string[], party: readonly Combatant[], monsters: readonly Combatant[]): Promise<boolean>
   /** The party changed: someone was hurt, paid, or picked. */
   party(members: readonly Member[], selected: number): void
   /** Picks a party member by index. */
@@ -240,6 +246,57 @@ export class GameSession {
     this.ui.party(this.roster.members, this.roster.selected)
   }
 
+  // ---- combat ------------------------------------------------------------------
+
+  /** Runs a fight against the groups LOAD MONSTER queued, a round at a time. */
+  private async fight(groups: readonly MonsterGroup[]): Promise<CombatOutcome> {
+    const loaded: { member: Member; count: number }[] = []
+    for (const group of groups) {
+      const monster = await this.library.monster(this.area, group.id)
+      if (monster) loaded.push({ member: monster, count: group.count })
+      else this.ui.note(`monster ${group.id} is not in MON${this.area}CHA.DAX`)
+    }
+    if (loaded.length === 0) return this.ui.combat(groups)
+
+    const party = this.roster.members.map((member) => ({ member, label: member.character.name }))
+    const combat = new Combat(party, labelMonsters(loaded), (max) => Math.floor(Math.random() * (max + 1)))
+    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+
+    let outcome: CombatOutcome = 'won'
+    while (!combat.over) {
+      const lines = combat.next()
+      this.ui.party(this.roster.members, this.roster.selected)
+      if (combat.over) {
+        await this.ui.combatRound(combat.round, lines, combat.party, combat.monsters)
+        break
+      }
+      const keepFighting = await this.ui.combatRound(combat.round, lines, combat.party, combat.monsters)
+      if (!keepFighting) {
+        // Running works when the party is quicker than what is chasing it.
+        const chase = Math.max(...combat.monstersStanding.map((m) => m.member.character.movement))
+        if (this.roster.movement().min + random(5) >= chase) {
+          outcome = 'fled'
+          break
+        }
+        this.ui.print('THE PARTY CANNOT GET AWAY!', true)
+      }
+    }
+
+    if (outcome !== 'fled') outcome = combat.partyStanding.length > 0 ? 'won' : 'lost'
+    if (outcome === 'won') {
+      const experience = combat.experience()
+      const standing = this.roster.active
+      if (experience > 0 && standing.length > 0) {
+        const each = Math.floor(experience / standing.length)
+        for (const member of standing) member.character.experience += each
+        this.ui.print(`EACH SURVIVOR GAINS ${each} EXPERIENCE.`, true)
+      }
+    }
+    if (outcome === 'lost') this.ui.print('THE PARTY HAS FALLEN.', true)
+    this.ui.party(this.roster.members, this.roster.selected)
+    return outcome
+  }
+
   // ---- time --------------------------------------------------------------------
 
   private setTime(hour: number, minute: number): void {
@@ -329,7 +386,7 @@ export class GameSession {
       },
       loadMonster: () => ui.monsters(this.vm.monsters),
       clearMonsters: () => ui.monsters([]),
-      combat: (monsters) => ui.combat(monsters),
+      combat: (groups) => this.fight(groups),
       parlay: () => ui.parlay(),
       who: (prompt) => ui.who(prompt, this.roster.members),
       partyStrength: () => this.roster.strength(),

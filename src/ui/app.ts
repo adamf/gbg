@@ -11,6 +11,7 @@ import type { PartyState } from '../engine/party.js'
 import { GameSession, type MoveCommand, type SessionUi } from '../engine/session.js'
 import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-vm.js'
 import type { Member } from '../engine/roster.js'
+import type { Combatant } from '../engine/combat.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
@@ -199,10 +200,22 @@ const pageUi: SessionUi = {
   },
 
   async combat(monsters): Promise<CombatOutcome> {
-    // Combat is not built yet. Say so, and let the player decide how it went.
-    pageUi.print(`COMBAT IS NOT IN THIS BUILD. ${monsters.reduce((n, g) => n + g.count, 0)} MONSTERS FACE YOU.`, true)
+    // Only reached when the monsters could not be read from the area's files.
+    pageUi.print(`${monsters.reduce((n, g) => n + g.count, 0)} MONSTERS FACE YOU, BUT THEIR RECORDS ARE MISSING.`, true)
     const chosen = await pageUi.menu('How does it go?', ['THE PARTY WINS', 'THE PARTY FLEES'], 'horizontal')
     return chosen === 0 ? 'won' : 'fled'
+  },
+
+  async combatRound(round, lines, _party, monsters: readonly Combatant[]) {
+    const standing = monsters.filter((m) => m.member.character.status === 'okay')
+    const summary = standing.length === 0 ? 'THE ENEMY IS DEFEATED.' : `${standing.length} FOE${standing.length === 1 ? '' : 'S'} STILL STAND.`
+    pageUi.print(`ROUND ${round}\n${lines.join('\n')}\n${summary}`, true)
+    if (standing.length === 0 || _party.every((p) => p.member.character.status !== 'okay')) {
+      await pageUi.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+      return false
+    }
+    const chosen = await pageUi.menu(undefined, ['FIGHT ON', 'RUN'], 'horizontal')
+    return chosen === 0
   },
 
   parlay() {
