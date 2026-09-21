@@ -336,6 +336,13 @@ export class GameLibrary {
     return decodeAnyImage(block.data, file)?.frames ?? []
   }
 
+  /** The random decorations a fight may show: table, chairs and the like. */
+  async randomTiles(): Promise<Rgba[]> {
+    const archive = await this.archive('RANDCOM.DAX')
+    const block = archive?.blocks[0]
+    return block ? decodeAnyImage(block.data, 'RANDCOM.DAX')?.frames ?? [] : []
+  }
+
   /** A monster's combat icon: the area's CPIC block the script named. */
   async combatIcon(area: number, id: number): Promise<Rgba | undefined> {
     return (await this.artBlock(`CPIC${area}.DAX`, id))?.frames[0]

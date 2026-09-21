@@ -294,8 +294,8 @@ const pageUi: SessionUi = {
     return chosen === 0 ? 'tactical' : 'quick'
   },
 
-  battleArt(tiles, outdoors) {
-    battleArt = { tiles: [...tiles], outdoors }
+  battleArt(tiles, decorations, outdoors) {
+    battleArt = { tiles: [...tiles], decorations: [...decorations], outdoors }
   },
 
   async battleUpdate(battle, lines) {

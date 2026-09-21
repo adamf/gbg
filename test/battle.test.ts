@@ -117,3 +117,41 @@ describe('monsters that shoot and cast', () => {
     void BATTLE_STEPS
   })
 })
+
+describe('furniture and the wilderness', () => {
+  it('drops a table and chairs into a flagged room, and never into a corridor', async () => {
+    const { buildArena } = await import('../src/engine/arena.js')
+    const { buildGeoBlock } = await import('./fixtures.js')
+    const { readGeoMap } = await import('../src/formats/geo.js')
+    // A single walled room at (8,8) with the furniture bit set, rock all round.
+    const room = readGeoMap(1, buildGeoBlock(
+      (row, col) => (row === 8 && col === 8 ? { n: 1, e: 1, s: 1, w: 1 } : { n: 1, e: 1, s: 1, w: 1 }),
+      () => 0,
+      (row, col) => (row === 8 && col === 8 ? 0x40 : 0),
+    ))
+    const furnished = buildArena(room, { row: 8, col: 8 }, () => 0)
+    const ids = [...furnished.tiles]
+    expect(ids.filter((id) => id === 0x1a).length).toBeGreaterThan(0)
+    expect(ids.filter((id) => id === 0x1b).length).toBeGreaterThan(0)
+    const p = furnished.patch(0, 0)
+    expect(furnished.tile(p.x + 2 + 2, p.y + 2)).toBe(0x22) // the table draws the first decoration
+    expect(furnished.walkable(p.x + 2 + 2, p.y + 2)).toBe(true) // and can be climbed over, at a cost
+    const bare = buildArena(corridor(), { row: 8, col: 8 }, () => 0)
+    expect([...bare.tiles].some((id) => id === 0x1a || id === 0x1b)).toBe(false)
+  })
+
+  it('rolls open ground with scenery outdoors, on the same grid', async () => {
+    const { buildWildArena } = await import('../src/engine/arena.js')
+    let seed = 7
+    const random = (max: number) => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed % (max + 1) }
+    const wild = buildWildArena(random, 0x20)
+    const ids = [...wild.tiles]
+    expect(ids.every((id) => id >= 23)).toBe(true)
+    expect(ids.filter((id) => id === 23).length).toBeGreaterThan(300)
+    expect(ids.some((id) => id !== 23)).toBe(true)
+    expect(wild.walkable(25, 12) || wild.walkable(26, 12)).toBe(true)
+    const trees = ids.filter((id) => id >= 0x20 && id <= 0x24).length
+    expect(trees).toBeGreaterThan(0)
+    expect(wild.tile(0, 0)).toBe(22)
+  })
+})

@@ -326,8 +326,15 @@ right of the one above and north–south walls run as diagonals. Rows 2–4 are 
 (piece 22); a west wall is a three-wide diagonal band of pieces 4, 3, 13 across them;
 a north wall is pieces 5 over 10 in columns 3–4 of rows 0–1; the two-by-two corners
 at columns 1–2 and 5–6 are chosen from the walls of the squares above and beside.
-A side reads as 0 open, 1 wall, 3 door, OR'd across the boundary. Only piece 22 can be
-stood on.
+A side reads as 0 open, 1 wall, 3 door, OR'd across the boundary. The grid holds ids
+into the original's background tile table, which gives each id an art cell and a
+move cost; 255 cannot be stood on, which makes some corner slivers walkable and the
+walls not. A room flagged with bit 6 of its event byte may get a table (id 0x1A, the
+first RANDCOM cell) with chairs around it. Outdoors the same grid is filled by the
+wilderness routine: open ground (WILDCOM cell 22), by the region's terrain flags a
+river slanting with the map, clearings of rough ground, and scenery rolled onto the
+rest; the region flags are not yet read from the game, so every outdoor fight is
+wooded.
 
 ## Saved games — `src/formats/library.ts`
 

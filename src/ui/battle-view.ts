@@ -8,6 +8,7 @@
  */
 
 import type { Battle, Fighter } from '../engine/battle.js'
+import { RANDOM_CELLS } from '../engine/arena.js'
 import type { Rgba } from '../formats/ega.js'
 
 export const SQUARE = 48
@@ -15,7 +16,10 @@ export const VIEW_COLS = 13
 export const VIEW_ROWS = 9
 
 export interface BattleArt {
+  /** DUNGCOM underground, WILDCOM outdoors. */
   tiles: Rgba[]
+  /** RANDCOM: the cells from 0x22 on. */
+  decorations: Rgba[]
   outdoors: boolean
 }
 
@@ -30,12 +34,6 @@ function toCanvas(image: Rgba): HTMLCanvasElement {
   canvas.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(image.pixels), image.width, image.height), 0, 0)
   canvasCache.set(image, canvas)
   return canvas
-}
-
-/** A deterministic pick from the scenery, so the same square always shows the same tree. */
-function scenery(tiles: Rgba[], x: number, y: number): Rgba | undefined {
-  const choices = [0, 1, 2, 3, 5, 6, 7]
-  return tiles[choices[(x * 7 + y * 13) % choices.length]!]
 }
 
 /** Where the window sits: centred on the fighter, kept inside the arena. */
@@ -62,7 +60,8 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
 
   const view = viewport(battle, active)
 
-  // The arena names a DUNGCOM piece for every square; the art does the rest.
+  // The arena names an art cell for every square; the art does the rest. Cells
+  // from 0x22 on are the random decorations.
   for (let vy = 0; vy < VIEW_ROWS; vy++) {
     for (let vx = 0; vx < VIEW_COLS; vx++) {
       const x = view.x + vx
@@ -75,15 +74,10 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
         g.fillRect(px, py, SQUARE, SQUARE)
         continue
       }
-      if (battle.tile(x, y) === 'floor') continue
-      if (outdoors) {
-        const tree = art && scenery(art.tiles, x, y)
-        if (tree) g.drawImage(toCanvas(tree), px, py, SQUARE, SQUARE)
-        continue
-      }
-      const image = art?.tiles[index]
+      if (!outdoors && index === 22) continue
+      const image = index >= RANDOM_CELLS ? art?.decorations[index - RANDOM_CELLS] : art?.tiles[index]
       if (image) g.drawImage(toCanvas(image), px, py, SQUARE, SQUARE)
-      else { g.fillStyle = '#8a8a8a'; g.fillRect(px, py, SQUARE, SQUARE) }
+      else if (!outdoors) { g.fillStyle = '#8a8a8a'; g.fillRect(px, py, SQUARE, SQUARE) }
     }
   }
 

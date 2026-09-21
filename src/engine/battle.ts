@@ -10,7 +10,7 @@
 
 import type { Character } from '../formats/character.js'
 import type { Direction, GeoMap } from '../formats/geo.js'
-import { buildArena, type Arena } from './arena.js'
+import { buildArena, buildWildArena, type Arena } from './arena.js'
 import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
 import { cast, forget, ready } from './casting.js'
 
@@ -63,9 +63,10 @@ export class Battle {
     at: { row: number; col: number; facing: Direction },
     distance: number,
     private readonly random: Random,
+    outdoors = false,
   ) {
     this.combat = new Combat(party, monsters, random)
-    this.arena = buildArena(map, at)
+    this.arena = outdoors ? buildWildArena(random) : buildArena(map, at, random)
     this.width = this.arena.width
     this.height = this.arena.height
     this.place(party, monsters, at, distance)
