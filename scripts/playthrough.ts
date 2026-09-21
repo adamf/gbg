@@ -78,7 +78,9 @@ const ui: SessionUi = {
     if (find('COMBAT') >= 0 && find('WAIT') >= 0) return random(9) < 7 ? find('COMBAT') : find('FLEE')
     if (find('SHARE') >= 0) return find('SHARE')
     if (find('LEAVE THE REST') >= 0) return find('LEAVE THE REST')
-    if (find('LEAVE') >= 0 && labels.length <= 3 && find('NORTH') < 0) return find('LEAVE')
+    // Leave small menus alone the first few times; after that try the other answers,
+    // or a door that puts the party back outside is entered forever.
+    if (find('LEAVE') >= 0 && labels.length <= 3 && find('NORTH') < 0 && (menuSeen.get(key) ?? 0) <= 3) return find('LEAVE')
     return random(items.length - 1)
   },
   inputNumber: async () => 1,
