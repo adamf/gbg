@@ -116,13 +116,15 @@ export function cast(
   const level = Math.max(1, casterLevel(caster, spell.class))
   const lines: string[] = [`${caster.name} CASTS ${spell.name.toUpperCase()}.`]
   const e = spell.effect
+  const rounds = (e.rounds ?? 0) + (e.roundsPerLevel ?? 0) * level || 99
+  const chosen = e.only ? targets.filter((t) => t.name.toUpperCase().includes(e.only!)) : targets
 
   switch (e.kind) {
     case 'heal':
-      for (const t of targets) {
+      for (const t of chosen) {
         const amount = Math.min(t.hpMax - t.hpCurrent, roll(e.dice ?? 1, e.sides ?? 8, e.bonus ?? 0, random))
         t.hpCurrent += amount
-        if (t.status === 'unconscious' && t.hpCurrent > 0) { t.status = 'okay'; t.statusByte = 0 }
+        if ((t.status === 'unconscious' || t.status === 'dying') && t.hpCurrent > 0) { t.status = 'okay'; t.statusByte = 0 }
         lines.push(`${t.name} IS HEALED ${amount}.`)
       }
       break
@@ -131,24 +133,27 @@ export function cast(
     case 'damage': {
       const dice = (e.dice ?? 0) + (e.perLevel ?? 0) * level
       const missiles = spell.id === 15 ? Math.floor((level + 1) / 2) : 1
-      for (const t of targets) {
+      const fire = /fire|burning|flame/i.test(spell.name)
+      for (const t of chosen) {
         let amount = 0
         for (let m = 0; m < missiles; m++) amount += roll(dice, e.sides ?? 6, e.bonus ?? 0, random)
         if (spell.id === 9 || spell.id === 20) amount = Math.max(amount, level)
         if (spell.target === 'foes' && savesVsSpell(t, random)) amount = Math.floor(amount / 2)
-        hurt(t, amount, combat, /fire|burning|flame/i.test(spell.name))
-        lines.push(`${t.name} TAKES ${amount}${t.status === 'dead' || t.status === 'unconscious' ? ` AND IS ${t.status.toUpperCase()}` : ''}.`)
+        if (fire && combat?.has(t, 'resistFire')) amount = Math.floor(amount / 2)
+        hurt(t, amount, combat, fire)
+        lines.push(`${t.name} TAKES ${amount}${t.status === 'dead' || t.status === 'unconscious' || t.status === 'dying' ? ` AND IS ${t.status.toUpperCase()}` : ''}.`)
       }
       break
     }
 
     case 'sleep': {
       let budget = roll(e.dice ?? 2, e.sides ?? 4, 0, random)
-      for (const t of targets) {
+      for (const t of chosen) {
         if (t.hitDice > (e.maxHitDice ?? 4) || t.status !== 'okay') continue
         if (t.hitDice > budget) continue
         budget -= Math.max(1, t.hitDice)
         t.status = 'asleep'
+        combat?.helplessRounds(t, rounds)
         lines.push(`${t.name} FALLS ASLEEP.`)
       }
       if (lines.length === 1) lines.push('NOBODY IS AFFECTED.')
@@ -157,33 +162,86 @@ export function cast(
 
     case 'hold': {
       let left = e.count ?? 3
-      for (const t of targets) {
+      for (const t of chosen) {
         if (left === 0) break
         if (t.status !== 'okay') continue
         left--
         if (savesVsSpell(t, random)) { lines.push(`${t.name} RESISTS.`); continue }
         t.status = 'held'
-        lines.push(`${t.name} IS HELD.`)
+        // A cloud's hold is a few rounds of retching; a charm lasts the fight.
+        combat?.helplessRounds(t, e.dice ? roll(e.dice, e.sides ?? 4, e.rounds ?? 0, random) : rounds)
+        lines.push(`${t.name} IS ${spell.id === 10 ? 'CHARMED' : spell.id === 34 ? 'OVERCOME' : 'HELD'}.`)
       }
+      if (lines.length === 1) lines.push('NOBODY IS AFFECTED.')
       break
     }
 
     case 'bless':
-      combat?.bless(e.bonus ?? 1)
-      if (spell.id === 42) combat?.curse(e.bonus ?? 1)
+      for (const t of chosen) combat?.affect(t, 'hit', e.bonus ?? 1, rounds)
+      if (spell.id === 42) combat?.curse(e.bonus ?? 1, rounds)
       lines.push('THE PARTY IS BLESSED.')
       break
 
     case 'curse':
-      combat?.curse(e.bonus ?? 1)
+      for (const t of chosen) combat?.affect(t, 'hit', -(e.bonus ?? 1), rounds)
       lines.push('THE ENEMY IS CURSED.')
       break
 
     case 'shield':
-      for (const t of targets) {
-        combat?.shield(t, e.bonus ?? 2)
+      for (const t of chosen) {
+        combat?.affect(t, 'ac', e.bonus ?? 2, rounds)
         lines.push(`${t.name} IS PROTECTED.`)
       }
+      break
+
+    case 'buff':
+      for (const t of chosen) {
+        combat?.affect(t, e.affect ?? 'hit', e.amount ?? 1, rounds)
+        lines.push(`${t.name} IS ${BUFF_WORDS[e.affect ?? 'hit'] ?? 'AFFECTED'}.`)
+      }
+      break
+
+    case 'weaken': {
+      let left = e.count ?? 99
+      for (const t of chosen) {
+        if (left === 0) break
+        left--
+        if (e.save && savesVsSpell(t, random)) { lines.push(`${t.name} RESISTS.`); continue }
+        combat?.affect(t, e.affect ?? 'hit', -(e.amount ?? 1), rounds)
+        lines.push(`${t.name} IS ${WEAKEN_WORDS[e.affect ?? 'hit'] ?? 'WEAKENED'}.`)
+      }
+      break
+    }
+
+    case 'cure':
+      for (const t of chosen) {
+        const what = e.cures ?? []
+        if (what.includes('poison') && t.poisoned) { t.poisoned = false; t.status = 'okay'; t.statusByte = 0; t.hpCurrent = Math.max(1, t.hpCurrent); lines.push(`${t.name} BREATHES AGAIN.`) }
+        else if (what.includes('drain') && (t.drained ?? 0) > 0) {
+          const index = t.levels.findIndex((l) => l > 0)
+          if (index >= 0) { t.levels[index]! += 1; t.hpMax += 5; t.drained = (t.drained ?? 0) - 1; lines.push(`${t.name} IS RESTORED A LEVEL.`) }
+        }
+        else if (what.includes('held') && t.status === 'held') { t.status = 'okay'; t.statusByte = 0; lines.push(`${t.name} MOVES AGAIN.`) }
+        else if (combat && (what.includes('curse') || what.includes('blind') || what.includes('disease'))) {
+          const gone = combat.dispel(t)
+          lines.push(gone > 0 ? `${t.name} IS RELIEVED.` : `${t.name} HAS NOTHING TO CURE.`)
+        }
+        else lines.push(`${t.name} HAS NOTHING TO CURE.`)
+      }
+      break
+
+    case 'dispel': {
+      let gone = 0
+      for (const t of chosen) {
+        if (combat) gone += combat.dispel(t)
+        if (t.status === 'held' || t.status === 'asleep') { t.status = 'okay'; t.statusByte = 0; gone++ }
+      }
+      lines.push(gone > 0 ? 'THE MAGIC UNRAVELS.' : 'THERE WAS NOTHING TO DISPEL.')
+      break
+    }
+
+    case 'utility':
+      lines.push(e.text ?? 'NOTHING VISIBLE HAPPENS.')
       break
 
     case 'none':
@@ -192,6 +250,9 @@ export function cast(
   }
   return { lines }
 }
+
+const BUFF_WORDS: Partial<Record<string, string>> = { hit: 'BLESSED', ac: 'PROTECTED', damage: 'STRENGTHENED', haste: 'HASTED', resistFire: 'PROOF AGAINST FIRE', resistCold: 'PROOF AGAINST COLD', missileProof: 'PROOF AGAINST MISSILES', invisible: 'INVISIBLE' }
+const WEAKEN_WORDS: Partial<Record<string, string>> = { hit: 'CURSED', damage: 'ENFEEBLED', slow: 'SLOWED', silence: 'SILENCED', ac: 'EXPOSED' }
 
 function hurt(target: Character, amount: number, combat?: Combat, fire = false): void {
   const result = takeDamage(target, amount, fire)

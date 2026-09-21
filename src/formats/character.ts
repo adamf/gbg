@@ -76,6 +76,10 @@ export interface Character {
   status: Status
   /** Fire or acid has touched them: a troll so marked does not regenerate. Not saved. */
   burnt?: boolean
+  /** Dead of poison: slow poison or a temple brings them back. Not saved. */
+  poisoned?: boolean
+  /** Levels drained by the undead, which restoration gives back. Not saved. */
+  drained?: number
   attacks: { count: number; dice: number; sides: number; bonus: number; range?: number; missile?: number }
   /** Old-to-new colour pairs, a nibble each, applied to the combat icon. */
   iconColours: number[]

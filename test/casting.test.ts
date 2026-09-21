@@ -96,13 +96,14 @@ describe('casting', () => {
 
   it('names every spell and casts the plain ones for nothing, and curses the foe', () => {
     expect(spellById(47)?.name).toBe('Fireball')
-    expect(spellById(24)).toMatchObject({ name: 'Resist Fire', class: 'cleric', level: 2, effect: { kind: 'none' } })
+    expect(spellById(24)).toMatchObject({ name: 'Resist Fire', class: 'cleric', level: 2, effect: { kind: 'buff', affect: 'resistFire' } })
+    expect(spellById(36)).toMatchObject({ name: 'Animate Dead', effect: { kind: 'none' } })
     expect(spellById(99)).toBeUndefined()
     const cleric = record('SEAN', { levels: [1] })
     const orc = record('ORC', { race: 0 })
     const combat = new Combat([{ member: { character: cleric, items: [] }, label: 'SEAN' }], labelMonsters([{ member: { character: orc, items: [] }, count: 1 }]), () => 0)
     cast(spellById(2)!, cleric, [orc], () => 0, combat)
-    expect(combat.hitModifier(false)).toBe(-1)
+    expect(combat.hitBonusOf(orc)).toBe(-1)
     expect(combat.hitModifier(true)).toBe(0)
   })
 
@@ -111,5 +112,43 @@ describe('casting', () => {
     const foes = [record('A', { race: 0, save: 20 }), record('B', { race: 0, save: 2 })]
     const { lines } = cast(spellById(23)!, cleric, foes, () => 10)
     expect(lines).toEqual(['SEAN CASTS HOLD PERSON.', 'A IS HELD.', 'B RESISTS.'])
+  })
+})
+
+
+describe('lasting effects', () => {
+  it('run for their rounds and fall off, doubling attacks under haste and gagging the silenced', () => {
+    const mage = record('DARKSTAR', { levels: [0, 0, 0, 0, 0, 5], book: [48, 25, 55], slots: [0, 0, 0, 1, 1, 1] })
+    const orc = record('ORC', { race: 0, hp: 8 })
+    const combat = new Combat([{ member: { character: mage, items: [] }, label: 'DARKSTAR' }], labelMonsters([{ member: { character: orc, items: [] }, count: 1 }]), () => 0)
+    cast(spellById(48)!, mage, [mage], () => 0, combat)
+    expect(combat.has(mage, 'haste')).toBe(true)
+    expect(combat.attacksOf(mage)).toBe(2)
+    // Haste lasts three rounds plus one a level: eight. Seven stirs later it still holds; the eighth ends it.
+    for (let i = 0; i < 7; i++) combat.stir()
+    expect(combat.has(mage, 'haste')).toBe(true)
+    combat.stir()
+    expect(combat.has(mage, 'haste')).toBe(false)
+
+    cast(spellById(55)!, mage, [orc], () => 0, combat)
+    expect(combat.has(orc, 'slow')).toBe(true)
+    expect(combat.attacksOf(orc)).toBe(1)
+    combat.affect(orc, 'silence', 1, 3)
+    expect(combat.has(orc, 'silence')).toBe(true)
+    expect(combat.dispel(orc)).toBeGreaterThan(0)
+    expect(combat.has(orc, 'slow')).toBe(false)
+  })
+
+  it('slow poison brings back the poisoned and restoration gives back a drained level', () => {
+    const cleric = record('SEAN', { levels: [3], book: [26, 56], slots: [1, 1, 1, 0, 0, 0] })
+    const victim = record('HERO', { levels: [0, 0, 3] })
+    victim.status = 'dead'; victim.poisoned = true; victim.hpCurrent = 0
+    const { lines } = cast(spellById(26)!, cleric, [victim], () => 0)
+    expect(lines[1]).toBe('HERO BREATHES AGAIN.')
+    expect(victim.status).toBe('okay')
+    victim.levels[2] = 2; victim.drained = 1
+    cast(spellById(56)!, cleric, [victim], () => 0)
+    expect(victim.levels[2]).toBe(3)
+    expect(victim.drained).toBe(0)
   })
 })

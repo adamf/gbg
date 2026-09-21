@@ -1079,6 +1079,7 @@ export class GameSession {
     const who = casters.length === 1 ? 0 : await this.ui.menu('WHO CASTS?', [...casters.map((c) => c.label), 'NOBODY'], 'vertical')
     const caster = casters[who]
     if (!caster) return []
+    if (combat.has(caster.member.character, 'silence')) return [`${caster.label} IS SILENCED AND CANNOT CAST.`]
     const usable = ready(caster.member.character)
     const pick = await this.ui.menu('CAST:', [...usable.map((s) => s.name.toUpperCase()), 'NOTHING'], 'vertical')
     const spell = usable[pick]

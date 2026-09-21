@@ -40,8 +40,11 @@ one server-side, or check a `.DAX` into git is the wrong change.
   that heals for gold, and a save in the browser's storage with a Continue button.
 
 - **Spells** — memorised at camp against the book and the slots, refilled by rest,
-  cast in a fight or on the road: cures, sleep, magic missile, hold, bless, shield,
-  fireball and lightning. Sleepers and the held are auto-hit for double.
+  cast in a fight or on the road: all fifty-six of the game's list have an effect,
+  with the manual's durations, on a registry of lasting effects the fight keeps —
+  blessings and curses, shields and protections, haste and slow, silence, strength
+  and enfeeblement, proofing against fire and missiles, the cures for poison and
+  drain and paralysis. Sleepers and the held are auto-hit for double.
 - **Training** — the halls' class masks and PROGRAM 0 open a training menu; a level
   costs the original's thousand gold and brings a hit die, a better to-hit and slots.
 - **Treasure and shops** — what TREASURE leaves on the ground can be shared and taken,

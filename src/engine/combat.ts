@@ -9,6 +9,7 @@
  */
 
 import type { Character } from '../formats/character.js'
+import type { AffectKind } from '../formats/spells.js'
 import type { Rgba } from '../formats/ega.js'
 import type { Member } from './roster.js'
 
@@ -26,9 +27,24 @@ export interface Combatant {
 
 export type Random = (max: number) => number
 
+export interface Affect {
+  kind: AffectKind
+  amount: number
+  rounds: number
+}
+
 /** Whether an attacker's roll lands on a defender: THAC0 minus AC, on a d20. */
+/**
+ * The manual's rule: a d20 at or above THAC0 less the target's armour class hits.
+ * The record's to-hit byte at 0x110 is where the game kept the working number:
+ * strength, the weapon's plus and every level trained are already in it.
+ */
 export function hits(attacker: Character, defender: Character, roll: number): boolean {
-  const needed = attacker.thac0 - defender.ac
+  const raw = attacker.hitBonusRaw
+  // 60 - byte is the THAC0 the record actually fights with (orc leader 16 and 44,
+  // ogre 15 and 45); the high bit means something else and the byte is then ignored.
+  const effective = raw && !(raw & 0x80) ? 60 - raw : attacker.thac0
+  const needed = effective - defender.ac
   return roll >= needed || roll === 20
 }
 
@@ -129,15 +145,13 @@ export function takeDamage(character: Character, amount: number, fire = false): 
 export class Combat {
   round = 0
   readonly log: string[] = []
-  /** To-hit bonus the party carries for the fight, from a blessing. */
-  private partyHitBonus = 0
-  /** To-hit penalty on the monsters, from a curse. */
-  private monsterHitPenalty = 0
-  /** Armour class bonus by character, from shields and protections. */
-  private readonly acBonus = new Map<Character, number>()
+  /** What lasts on a character this fight: blessings, shields, haste, silence, each with rounds to run. */
+  private readonly affects = new Map<Character, Affect[]>()
   /** Who has already acted this round — casters, mostly. */
   readonly acted = new Set<Character>()
   private readonly helplessSince = new Map<Character, number>()
+  /** How long a sleep or a hold lasts on someone, in rounds; ten when nothing says. */
+  private readonly helplessFor = new Map<Character, number>()
 
   constructor(
     readonly party: Combatant[],
@@ -157,26 +171,86 @@ export class Combat {
     return this.party.filter(alive).length === 0 || this.monsters.filter(targetable).length === 0
   }
 
-  bless(bonus: number): void {
-    this.partyHitBonus += bonus
+  // ---- lasting effects --------------------------------------------------------
+
+  affect(character: Character, kind: AffectKind, amount: number, rounds: number): void {
+    const list = this.affects.get(character) ?? []
+    list.push({ kind, amount, rounds })
+    this.affects.set(character, list)
   }
 
-  curse(penalty: number): void {
-    this.monsterHitPenalty += penalty
+  affectsOn(character: Character): readonly Affect[] {
+    return this.affects.get(character) ?? []
   }
 
-  /** What a side adds to its d20, from blessings and curses. */
-  hitModifier(ours: boolean): number {
-    return ours ? this.partyHitBonus : -this.monsterHitPenalty
+  has(character: Character, kind: AffectKind): boolean {
+    return this.affectsOn(character).some((a) => a.kind === kind)
+  }
+
+  private sum(character: Character, kind: AffectKind): number {
+    return this.affectsOn(character).reduce((n, a) => (a.kind === kind ? n + a.amount : n), 0)
+  }
+
+  /** Strips every magical effect from a character: dispel magic. */
+  dispel(character: Character): number {
+    const had = this.affectsOn(character).length
+    this.affects.delete(character)
+    return had
+  }
+
+  /** A round passes: every effect runs down, the spent ones fall off. */
+  private tick(): void {
+    for (const [character, list] of this.affects) {
+      const left = list.map((a) => ({ ...a, rounds: a.rounds - 1 })).filter((a) => a.rounds > 0)
+      if (left.length > 0) this.affects.set(character, left)
+      else this.affects.delete(character)
+    }
+  }
+
+  /** The old side-wide blessing and curse, kept for the callers that have them. */
+  bless(bonus: number, rounds = 6): void {
+    for (const c of this.party) this.affect(c.member.character, 'hit', bonus, rounds)
+  }
+
+  curse(penalty: number, rounds = 6): void {
+    for (const c of this.monsters) this.affect(c.member.character, 'hit', -penalty, rounds)
+  }
+
+  shield(character: Character, bonus: number, rounds = 99): void {
+    this.affect(character, 'ac', bonus, rounds)
+  }
+
+  /** What a side adds to its d20: kept for old callers, always the character's own now. */
+  hitModifier(_ours: boolean): number {
+    return 0
+  }
+
+  /** A character's to-hit bonus this fight, from blessings and curses. */
+  hitBonusOf(character: Character): number {
+    return this.sum(character, 'hit')
   }
 
   /** A character's armour class as it stands in this fight, protections counted. */
   acOf(character: Character): number {
-    return character.ac - (this.acBonus.get(character) ?? 0)
+    return character.ac - this.sum(character, 'ac')
   }
 
-  shield(character: Character, bonus: number): void {
-    this.acBonus.set(character, (this.acBonus.get(character) ?? 0) + bonus)
+  damageBonusOf(character: Character): number {
+    return this.sum(character, 'damage')
+  }
+
+  /** Attacks this round: the record's, doubled by haste, halved by slow. */
+  attacksOf(character: Character): number {
+    let count = Math.max(1, Math.round(character.attacks.count / 2))
+    if (this.has(character, 'haste')) count *= 2
+    if (this.has(character, 'slow')) count = Math.max(1, Math.floor(count / 2))
+    return count
+  }
+
+  /** Sleep and hold with a set length: the stir below honours it. */
+  helplessRounds(character: Character, rounds: number): void {
+    this.helplessFor.set(character, rounds)
+    this.helplessSince.set(character, this.round)
   }
 
   /** A spell dropped someone; nothing more to do, the status says it. */
@@ -188,6 +262,7 @@ export class Combat {
    * side is left able to act, so a fight cannot stall with everyone lying down.
    */
   stir(): void {
+    this.tick()
     const all = [...this.party, ...this.monsters]
     const nobody = !all.some((c) => alive(c) && !helpless(c))
     for (const c of all) {
@@ -195,9 +270,10 @@ export class Combat {
       if (!helpless(c)) { this.helplessSince.delete(character); continue }
       const since = this.helplessSince.get(character) ?? this.round
       this.helplessSince.set(character, since)
-      if (nobody || this.round - since >= 10) {
+      if (nobody || this.round - since >= (this.helplessFor.get(character) ?? 10)) {
         character.status = 'okay'
         this.helplessSince.delete(character)
+        this.helplessFor.delete(character)
       }
     }
   }
@@ -220,15 +296,15 @@ export class Combat {
       // Helpless foes are finished off first; otherwise anyone.
       const easy = foes.filter(helpless)
       const target = (easy.length > 0 ? easy : foes)[this.random((easy.length > 0 ? easy : foes).length - 1)]!
-      const attacks = Math.max(1, Math.round(attacker.member.character.attacks.count / 2))
+      const attacks = this.attacksOf(attacker.member.character)
       for (let i = 0; i < attacks && targetable(target); i++) {
-        const roll = this.random(19) + 1 + this.hitModifier(ours)
+        const roll = this.random(19) + 1 + this.hitBonusOf(attacker.member.character)
         const defender = { ...target.member.character, ac: this.acOf(target.member.character) }
         if (!helpless(target) && !hits(attacker.member.character, defender, roll)) {
           lines.push(`${attacker.label} MISSES ${target.label}.`)
           continue
         }
-        const damage = rollDamage(attacker.member.character, this.random) * (helpless(target) ? 2 : 1)
+        const damage = Math.max(1, rollDamage(attacker.member.character, this.random) + this.damageBonusOf(attacker.member.character)) * (helpless(target) ? 2 : 1)
         const result = takeDamage(target.member.character, damage)
         lines.push(`${attacker.label} HITS ${target.label} FOR ${damage}.${result === 'hurt' ? '' : ` ${target.label} IS ${result.toUpperCase()}!`}`)
       }

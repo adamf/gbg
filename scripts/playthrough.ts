@@ -297,9 +297,11 @@ for (let step = 0; step < STEPS; step++) {
   for (const m of members) {
     if (m.character.status === 'dead' && step % 50 === 0) { raises++; m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
   }
-  const hurt = members.some((m) => m.character.hpCurrent < m.character.hpMax / 2 || m.character.status !== 'okay')
-  const noSpells = members.some((m) => m.character.prepared.length > 0 && m.character.memorised.length === 0)
-  if ((hurt || noSpells) && step % 5 === 0) {
+  // On a quest the party rests whenever anyone is scratched or a spell is spent — the
+  // Slums are lost by fighting worn down, not by fighting.
+  const hurt = members.some((m) => (quest ? m.character.hpCurrent < m.character.hpMax : m.character.hpCurrent < m.character.hpMax / 2) || m.character.status !== 'okay')
+  const noSpells = members.some((m) => quest ? m.character.prepared.length > m.character.memorised.length : m.character.prepared.length > 0 && m.character.memorised.length === 0)
+  if ((hurt || noSpells) && (quest || step % 5 === 0)) {
     wantRest = true
     if (process.env.PLAY_DEBUG) console.log(`camp at step ${step}`)
     try { await withTimeout(session.camp(), 20_000, `camp at step ${step}`) } catch (e) { errors.push(String(e instanceof Error ? e.message : e)) }
@@ -322,6 +324,11 @@ for (let step = 0; step < STEPS; step++) {
     if (quest.phase === 'hall' && quest.log.some((l) => /REWARD|CLERK SPEAKS/.test(l))) { quest.phase = 'done'; console.log(`step ${step}: THE CLERK HAS SPOKEN`); break }
     if (quest.phase === 'city' && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [27], step)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if (quest.phase === 'hall' && session.scriptId === 8 && session.map && !session.busy) {
+      // The clerk is the hall's event 26; the guarded door is the council's, not hers.
+      const routed = routeTo(session.map, session.party, [26], step)
       if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
     }
     if (quest.phase === 'slums' && session.map && !session.busy) {

@@ -384,15 +384,20 @@ export class Battle {
     const attacker = f.combatant.member.character
     const defender = target.combatant.member.character
     const helpless = defender.status === 'asleep' || defender.status === 'held'
-    const attacks = Math.max(1, Math.round(attacker.attacks.count / 2))
+    const attacks = this.combat.attacksOf(attacker)
     const ours = f.side === 'party'
+    if (!melee && this.combat.has(defender, 'missileProof')) {
+      f.acted = true
+      f.moves = 0
+      return [`THE MISSILE GLANCES OFF ${target.combatant.label}.`]
+    }
     for (let i = 0; i < attacks && targetable(target.combatant); i++) {
-      const roll = this.random(19) + 1 + this.combat.hitModifier(ours)
+      const roll = this.random(19) + 1 + this.combat.hitBonusOf(attacker)
       if (!helpless && !hits(attacker, { ...defender, ac: this.combat.acOf(defender) }, roll)) {
         lines.push(`${f.combatant.label} MISSES ${target.combatant.label}.`)
         continue
       }
-      const damage = rollDamage(attacker, this.random) * (helpless ? 2 : 1)
+      const damage = Math.max(1, rollDamage(attacker, this.random) + this.combat.damageBonusOf(attacker)) * (helpless ? 2 : 1)
       effect.hit = true
       const fire = attacker.attacks.missile === SPRITE.flask
       const result = takeDamage(defender, damage, fire)
@@ -403,7 +408,7 @@ export class Battle {
     if (melee && defender.hitDice < 1 && fighterLevel(attacker) > 0) {
       for (const other of this.neighbours(f)) {
         if (other === target || other.combatant.member.character.hitDice >= 1) continue
-        const roll = this.random(19) + 1 + this.combat.hitModifier(ours)
+        const roll = this.random(19) + 1 + this.combat.hitBonusOf(attacker)
         const c = other.combatant.member.character
         if (!hits(attacker, { ...c, ac: this.combat.acOf(c) }, roll)) { lines.push(`${f.combatant.label} SWEEPS AT ${other.combatant.label} AND MISSES.`); continue }
         const damage = rollDamage(attacker, this.random)
@@ -435,6 +440,7 @@ export class Battle {
         victim.status = 'dead'
         victim.statusByte = 6
         victim.hpCurrent = 0
+        victim.poisoned = true
         return [`${target.combatant.label} IS POISONED AND DIES!`]
       case 'drainer': {
         const index = victim.levels.findIndex((l) => l > 0)
@@ -442,6 +448,7 @@ export class Battle {
         const level = victim.levels[index]!
         if (level <= 1) { victim.status = 'dead'; victim.statusByte = 6; victim.hpCurrent = 0; return [`${target.combatant.label} IS DRAINED OF LIFE!`] }
         victim.levels[index] = level - 1
+        victim.drained = (victim.drained ?? 0) + 1
         const lost = Math.max(1, Math.floor(victim.hpMax / level))
         victim.hpMax -= lost
         victim.hpCurrent = Math.min(victim.hpCurrent, victim.hpMax)
@@ -522,7 +529,7 @@ export class Battle {
       return foes.sort((a, b) => (Math.abs(a.x - f.x) + Math.abs(a.y - f.y)) - (Math.abs(b.x - f.x) + Math.abs(b.y - f.y)))[0]
     }
 
-    const spells = ready(me).filter((s) => s.target === 'foe' || s.target === 'foes')
+    const spells = this.combat.has(me, 'silence') ? [] : ready(me).filter((s) => s.target === 'foe' || s.target === 'foes')
     if (spells.length > 0) {
       const spell = spells[this.random(spells.length - 1)]!
       const foes = this.fighters.filter((o) => o.side !== f.side && able(o.combatant.member.character))
