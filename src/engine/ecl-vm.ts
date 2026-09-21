@@ -321,6 +321,14 @@ export interface EclHost {
   call?(id: number): Promise<void> | void
   /** 0 the start menu, 3 party killed, 8 game won, 9 encamp. */
   program?(id: number): Promise<void> | void
+  /** An NPC joins the party: a monster record by id, at this morale. */
+  addNpc?(id: number, morale: number): Promise<void> | void
+  /** Thieves: keep `keepPercent` of the coins and lose each item with `itemChance` percent. */
+  rob?(everyone: boolean, keepPercent: number, itemChance: number): Promise<void> | void
+  /** Who has a spell ready: their index and the spell's one-based place in their list. */
+  spellHolder?(spellId: number): { player: number; index: number } | undefined
+  /** CHECK PARTY: the party's least, greatest and average of a movement or a thief skill, or whether anyone has an affect. */
+  checkParty?(kind: 'movement' | 'skill' | 'affect', which: number): [number, number, number, number]
   /** Uniform in 0..max inclusive. */
   random?(max: number): number
   log?(message: string): void
@@ -649,10 +657,18 @@ export class EclVm {
       }
 
       case 0x1e: { // CHECK PARTY
-        // Asks about the party's affects or movement and fills four results. Without a
-        // party model there is nothing to report, so the results are all zero.
+        // The first operand is an address in the original's code space: 0x9f means
+        // movement, 0xa5–0xac a thief skill, 8001 an affect. Four results follow.
         const { operands } = this.operands(6)
-        for (const operand of operands.slice(2)) this.memory.write(operand.word, 0)
+        const what = (operands[0]!.word - 0x7fff) & 0xffff
+        const which = this.value(operands[1])
+        let results: [number, number, number, number] = [0, 0, 0, 0]
+        if (this.host.checkParty) {
+          if (what === 8001) results = this.host.checkParty('affect', which)
+          else if (what >= 0xa5 && what <= 0xac) results = this.host.checkParty('skill', what - 0xa5)
+          else if (what === 0x9f) results = this.host.checkParty('movement', 0)
+        }
+        operands.slice(2, 6).forEach((operand, i) => this.memory.write(operand.word, results[i] ?? 0))
         return
       }
 
@@ -729,9 +745,11 @@ export class EclVm {
         return
       }
 
-      case 0x28: // ROB
-        this.operands(3)
+      case 0x28: { // ROB
+        const { operands } = this.operands(3)
+        await this.host.rob?.(this.value(operands[0]) !== 0, 100 - (this.value(operands[1]) & 0xff), this.value(operands[2]) & 0xff)
         return
+      }
 
       case 0x29: { // ENCOUNTER MENU
         const { operands, strings } = this.operands(14)
@@ -826,9 +844,11 @@ export class EclVm {
         return
       }
 
-      case 0x36: // ADD NPC
-        this.operands(2)
+      case 0x36: { // ADD NPC
+        const { operands } = this.operands(2)
+        await this.host.addNpc?.(this.value(operands[0]) & 0xff, this.value(operands[1]) & 0xff)
         return
+      }
 
       case 0x37: { // LOAD PIECES
         const { operands } = this.operands(3)
@@ -861,10 +881,12 @@ export class EclVm {
         return
 
       case 0x3b: { // SPELL
-        // Looks for a party member with a spell; without one, both results are "not found".
+        // Who has the spell ready: its place in their list, and which member. Not found
+        // is 0xff and the last member, as the original left it.
         const { operands } = this.operands(3)
-        this.memory.write(operands[1]!.word, 0xff)
-        this.memory.write(operands[2]!.word, 0xff)
+        const found = this.host.spellHolder?.(this.value(operands[0]) & 0xff)
+        this.memory.write(operands[1]!.word, found ? found.index : 0xff)
+        this.memory.write(operands[2]!.word, found ? found.player : 0xff)
         return
       }
 

@@ -310,7 +310,7 @@ const pageUi: SessionUi = {
     }
   },
 
-  battleTurn(battle, fighter, cast) {
+  battleTurn(battle, fighter, cast, use) {
     return new Promise<'done' | 'run'>((resolve) => {
       battlePanel.classList.add('shown')
       const label = fighter.combatant.label
@@ -345,6 +345,19 @@ const pageUi: SessionUi = {
             if (lines.length > 0) pageUi.print(lines.join('\n'), true)
             refresh()
           })
+        })
+        button('U', 'USE', !fighter.acted, () => {
+          void use().then((lines) => {
+            if (lines.length > 0) pageUi.print(lines.join('\n'), true)
+            if (battle.over) finish('done')
+            else refresh()
+          })
+        })
+        button('T', 'TURN', !fighter.acted && (fighter.combatant.member.character.levels[0] ?? 0) > 0 && battle.undead().length > 0, () => {
+          const lines = battle.turnUndead(fighter)
+          pageUi.print(lines.join('\n'), true)
+          if (battle.over) finish('done')
+          else refresh()
         })
         button('E', 'END TURN', true, () => (openTurn?.finish ?? finish)('done'))
         button('R', 'RUN', true, () => (openTurn?.finish ?? finish)('run'))
@@ -610,7 +623,7 @@ window.addEventListener('keydown', (event) => {
       if (battle.move(fighter, step)) refresh()
       return
     }
-    const hotkeys: Record<string, string> = { KeyF: 'ATTACK', KeyX: 'SHOOT', KeyC: 'CAST', KeyE: 'END TURN', KeyR: 'RUN' }
+    const hotkeys: Record<string, string> = { KeyF: 'ATTACK', KeyX: 'SHOOT', KeyC: 'CAST', KeyU: 'USE', KeyT: 'TURN', KeyE: 'END TURN', KeyR: 'RUN' }
     if (event.code === 'KeyX' && !event.shiftKey) {
       // X is a diagonal step down-right; shift-X shoots.
       event.preventDefault()
@@ -668,6 +681,21 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyC' && session && !session.busy) {
     event.preventDefault()
     void session.camp()
+    return
+  }
+
+  if (event.code === 'KeyT' && session && !session.busy && session.overhead) {
+    event.preventDefault()
+    const current = session
+    void current.travelOptions().then(async (options) => {
+      if (options.length === 0) {
+        pageUi.print('THERE IS NOWHERE TO TRAVEL FROM HERE.', true)
+        return
+      }
+      const pick = await pageUi.menu('TRAVEL TO:', [...options.map((o) => o.name.toUpperCase()), 'STAY'], 'vertical')
+      const chosen = options[pick]
+      if (chosen) await current.travelTo(chosen.id)
+    })
     return
   }
 

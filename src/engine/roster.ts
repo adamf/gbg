@@ -123,6 +123,41 @@ export class Roster {
     for (let i = 0; i < add.length; i++) money[i] = (money[i] ?? 0) + add[i]!
   }
 
+  /** Thieves at work: keep a share of the coins, and each item may go. */
+  rob(members: readonly Member[], keepPercent: number, itemChance: number, random: (max: number) => number): string[] {
+    const lines: string[] = []
+    for (const member of members) {
+      const money = member.character.money
+      let lost = 0
+      for (let i = 0; i < money.length; i++) {
+        const keep = Math.floor((money[i] ?? 0) * keepPercent / 100)
+        lost += (money[i] ?? 0) - keep
+        money[i] = keep
+      }
+      const gone = member.items.filter(() => random(99) < itemChance)
+      member.items = member.items.filter((item) => !gone.includes(item))
+      if (lost > 0 || gone.length > 0) lines.push(`${member.character.name} IS ROBBED OF ${lost > 0 ? `${lost} COINS` : ''}${lost > 0 && gone.length > 0 ? ' AND ' : ''}${gone.length > 0 ? `${gone.length} ITEM${gone.length === 1 ? '' : 'S'}` : ''}.`)
+    }
+    return lines
+  }
+
+  /** Who has a spell ready, as the SPELL command asks. */
+  spellHolder(spellId: number): { player: number; index: number } | undefined {
+    for (const [player, member] of this.members.entries()) {
+      const index = member.character.memorised.indexOf(spellId)
+      if (index >= 0) return { player, index: index + 1 }
+    }
+    return undefined
+  }
+
+  /** CHECK PARTY: the least, greatest and average of a number across the party. */
+  checkParty(kind: 'movement' | 'skill' | 'affect', which: number): [number, number, number, number] {
+    if (kind === 'affect' || this.members.length === 0) return [0, 0, 0, 0]
+    const values = this.members.map((m) => (kind === 'movement' ? m.character.movement : m.character.thiefSkills[which] ?? 0))
+    const avg = Math.floor(values.reduce((a, b) => a + b, 0) / values.length)
+    return [0, avg, Math.max(...values), Math.min(...values)]
+  }
+
   /** The selected character as the scripts see them at 0x6B00. */
   hook(): CharacterHook {
     const roster = this

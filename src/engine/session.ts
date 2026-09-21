@@ -68,7 +68,7 @@ export interface SessionUi {
    * The player's turn: the page moves the fighter and strikes; `cast` runs a spell
    * for them. Returns 'run' if the party tries to flee, otherwise when the turn ends.
    */
-  battleTurn(battle: Battle, fighter: Fighter, cast: () => Promise<string[]>): Promise<'done' | 'run'>
+  battleTurn(battle: Battle, fighter: Fighter, cast: () => Promise<string[]>, use: () => Promise<string[]>): Promise<'done' | 'run'>
   /** The battle is over; take the map down. */
   battleEnd(): void
   /** The party changed: someone was hurt, paid, or picked. */
@@ -285,7 +285,7 @@ export class GameSession {
         const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax)
         const choice = await this.ui.menu(
           `CAMP. ${hurt.length === 0 ? 'EVERYONE IS WELL.' : `${hurt.length} NEED REST.`}`,
-          ['REST', 'MEMORISE', 'CAST', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
+          ['REST', 'MEMORISE', 'CAST', 'USE', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
         if (choice === 0) {
           if (await this.rest()) return
         } else if (choice === 1) {
@@ -293,8 +293,10 @@ export class GameSession {
         } else if (choice === 2) {
           await this.castOutside()
         } else if (choice === 3) {
-          this.ui.saved()
+          await this.useOutside()
         } else if (choice === 4) {
+          this.ui.saved()
+        } else if (choice === 5) {
           this.ui.files(await this.dosSave('B'))
           this.ui.print('SAVGAMB.DAT AND THE CHRDATB FILES ARE READY. PUT THEM IN THE GAME FOLDER AND LOAD GAME B.', true)
         } else {
@@ -599,6 +601,10 @@ export class GameSession {
         fighter.acted = true
         fighter.moves = 0
         return lines
+      }, async () => {
+        const lines = await this.useInCombat(battle.combat, fighter)
+        if (lines.length > 0) { fighter.acted = true; fighter.moves = 0 }
+        return lines
       })
       this.ui.party(this.roster.members, this.roster.selected)
       if (result === 'run') {
@@ -882,6 +888,45 @@ export class GameSession {
     this.ui.party(this.roster.members, this.roster.selected)
   }
 
+  /** Camp: drink a potion. */
+  private async useOutside(): Promise<void> {
+    await this.names()
+    const carriers = this.roster.members.filter((m) => this.usableItems(m).length > 0)
+    if (carriers.length === 0) {
+      this.ui.print('NOBODY CARRIES ANYTHING TO USE HERE.', true)
+      return
+    }
+    const who = await this.ui.menu('WHO USES SOMETHING?', [...carriers.map((m) => m.character.name), 'NOBODY'], 'vertical')
+    const member = carriers[who]
+    if (!member) return
+    const usable = this.usableItems(member)
+    const pick = await this.ui.menu('USE:', [...usable.map((u) => u.label.toUpperCase()), 'NOTHING'], 'vertical')
+    const choice = usable[pick]
+    if (!choice) return
+    const target = await this.ui.who('ON WHOM?', this.roster.members)
+    const onto = this.roster.members[target]
+    if (!onto) return
+    this.ui.print((await this.useItem(member, choice, [onto.character])).join('\n'), true)
+  }
+
+  /** In a fight: a potion for a friend or a wand at a foe. */
+  async useInCombat(combat: Combat, fighter: Fighter): Promise<string[]> {
+    await this.names()
+    const member = fighter.combatant.member
+    const usable = this.usableItems(member)
+    if (usable.length === 0) return ['NOTHING TO USE.']
+    const pick = await this.ui.menu('USE:', [...usable.map((u) => u.label.toUpperCase()), 'NOTHING'], 'vertical')
+    const choice = usable[pick]
+    if (!choice) return []
+    const atFoes = choice.label.toUpperCase().includes('WAND')
+    const candidates = atFoes ? combat.monstersStanding : combat.party
+    const at = await this.ui.menu(atFoes ? 'AT WHOM?' : 'ON WHOM?', [...candidates.map((c) => c.label), 'NOBODY'], 'vertical')
+    const target = candidates[at]
+    if (!target) return []
+    combat.acted.add(member.character)
+    return this.useItem(member, choice, [target.member.character], combat)
+  }
+
   /** A round's casting: any caster with something ready may use it before blows fall. */
   private async castInCombat(combat: Combat): Promise<string[]> {
     const random = (max: number) => Math.floor(Math.random() * (max + 1))
@@ -923,6 +968,21 @@ export class GameSession {
     const { lines } = cast(spell, caster.member.character, targets, random, combat)
     this.ui.party(this.roster.members, this.roster.selected)
     return lines
+  }
+
+  /** The game is won: the closing pictures, then the word. */
+  private async ending(): Promise<void> {
+    const archive = await this.library.archive('FINAL5.DAX')
+    const { decodeAnyImage } = await import('../formats/image.js')
+    const pictures = (archive?.blocks ?? []).map((b) => decodeAnyImage(b.data, 'FINAL5.DAX')?.frames[0]).filter((f): f is Rgba => f !== undefined)
+    for (const [i, picture] of pictures.entries()) {
+      this.ui.picture(picture)
+      this.ui.print(i === 0 ? 'THE POOL OF RADIANCE IS NO MORE. PHLAN IS FREE.' : '', true)
+      await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+    }
+    this.ui.print('YOU HAVE WON. THANK YOU FOR PLAYING.', true)
+    await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
+    this.ui.picture(undefined)
   }
 
   /** A temple heals the wounded for gold, one hit point a coin, the way clerics charge. */
@@ -1098,8 +1158,11 @@ export class GameSession {
           await this.campMenu()
           return
         }
-        const names: Record<number, string> = { 3: 'the party has been killed', 8: 'the game is won' }
-        ui.note(`PROGRAM ${id}: ${names[id] ?? 'unknown'} (not implemented)`)
+        if (id === 8) {
+          await this.ending()
+          return
+        }
+        if (id === 3) ui.print('THE PARTY HAS BEEN KILLED.', true)
       },
       treasure: async (treasure) => {
         const add = [treasure.copper, treasure.silver, treasure.electrum, treasure.gold, treasure.platinum, treasure.gems, treasure.jewellery]
@@ -1116,7 +1179,89 @@ export class GameSession {
         ui.party(this.roster.members, this.roster.selected)
       },
       log: (message) => ui.note(message),
+      addNpc: async (id, morale) => {
+        const npc = await this.library.monster(this.area, id)
+        if (!npc || this.roster.members.length >= 8) return
+        npc.character.control = (morale >> 1) + 0x80
+        if (canCast(npc.character)) autoPrepare(npc.character)
+        this.roster.members.push(npc)
+        ui.print(`${npc.character.name} JOINS THE PARTY.`, false)
+        ui.party(this.roster.members, this.roster.selected)
+      },
+      rob: (everyone, keepPercent, itemChance) => {
+        const victims = everyone ? this.roster.members : [this.roster.current ?? this.roster.members[0]].filter((m): m is Member => m !== undefined)
+        for (const line of this.roster.rob(victims, keepPercent, itemChance, (max) => Math.floor(Math.random() * (max + 1)))) ui.print(`\n${line}`, false)
+        ui.party(this.roster.members, this.roster.selected)
+      },
+      spellHolder: (id) => this.roster.spellHolder(id),
+      checkParty: (kind, which) => this.roster.checkParty(kind, which),
     }
+  }
+
+  /** Where this wilderness script can send the party: every other script it names. */
+  async travelOptions(): Promise<{ id: number; name: string }[]> {
+    if (!this.program) return []
+    const { mapName } = await import('../formats/detect.js')
+    const ids = new Set<number>()
+    for (const instruction of this.program.instructions.values()) {
+      if (instruction.opcode === 0x20) {
+        const target = instruction.operands[0]
+        if (target && target.kind !== 'memory' && target.word !== this.blockId) ids.add(target.word & 0xff)
+      }
+    }
+    return [...ids].map((id) => ({ id, name: mapName(this.library.game.id, id) }))
+  }
+
+  /**
+   * Goes straight to another area's script, as arriving there would. The wilderness
+   * scripts steer by overland coordinates whose map is not read yet; this is the way
+   * across in the meantime.
+   */
+  async travelTo(id: number): Promise<void> {
+    if (this.running) return
+    await this.withScript(async () => {
+      await this.loadScript(id)
+      this.memory.write(POOL_ADDRESSES.inDungeon, 1)
+      await this.runStart()
+    })
+  }
+
+  /** Something from a pack: potions and wands, in or out of a fight. */
+  usableItems(member: Member): { index: number; label: string; use: (targets: Character[], combat?: Combat) => string[] }[] {
+    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const names = this.itemNames
+    const out: { index: number; label: string; use: (targets: Character[], combat?: Combat) => string[] }[] = []
+    member.items.forEach((item, index) => {
+      const label = itemDisplayName(item, names)
+      const upper = label.toUpperCase()
+      const heal = (dice: number, sides: number, bonus: number) => (targets: Character[]) => targets.map((t) => {
+        let amount = bonus
+        for (let i = 0; i < dice; i++) amount += random(sides - 1) + 1
+        amount = Math.min(amount, t.hpMax - t.hpCurrent)
+        t.hpCurrent += amount
+        if (t.status === 'unconscious' && t.hpCurrent > 0) { t.status = 'okay'; t.statusByte = 0 }
+        return `${t.name} DRINKS AND IS HEALED ${amount}.`
+      })
+      if (upper.includes('POTION') && upper.includes('EXTRA HEALING')) out.push({ index, label, use: heal(3, 8, 3) })
+      else if (upper.includes('POTION') && upper.includes('HEALING')) out.push({ index, label, use: heal(2, 4, 2) })
+      else if (upper.includes('WAND') && upper.includes('MAGIC MISSILE') && item.plus > 0) {
+        out.push({ index, label: `${label} (${item.plus} CHARGES)`, use: (targets, combat) => {
+          item.plus -= 1
+          const spell = spellById(15)!
+          return cast(spell, { ...member.character, levels: [0, 0, 0, 0, 0, 6, 0, 0] }, targets, random, combat).lines
+        } })
+      }
+    })
+    return out
+  }
+
+  /** Uses one thing on someone; consumes potions. Returns what happened. */
+  async useItem(member: Member, choice: { index: number; use: (targets: Character[], combat?: Combat) => string[] }, targets: Character[], combat?: Combat): Promise<string[]> {
+    const item = member.items[choice.index]
+    const lines = choice.use(targets, combat)
+    if (item && itemDisplayName(item, this.itemNames).toUpperCase().includes('POTION')) member.items.splice(choice.index, 1)
+    this.ui.party(this.roster.members, this.roster.selected)
+    return lines
   }
 }
 

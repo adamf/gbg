@@ -43,6 +43,7 @@ export function writeCharacter(c: Character): Uint8Array {
   for (let i = 0; i < 7; i++) i16(data, 0x88 + i * 2, c.money[i] ?? 0)
   for (let i = 0; i < 8; i++) data[0x96 + i] = c.levels[i] ?? 0
   data[0x9e] = c.sex
+  data[0x9f] = c.monsterType
   data[0xa0] = c.alignment
   data[0xa1] = c.attacks.count
   data[0xa9] = (60 - c.baseAc) & 0xff

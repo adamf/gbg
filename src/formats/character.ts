@@ -65,6 +65,8 @@ export interface Character {
   control: number
   money: number[]
   experience: number
+  /** For monsters: 4 is the animated dead, which clerics can turn. */
+  monsterType: number
   /** The original's health byte; see STATUSES. */
   statusByte: number
   status: Status
@@ -142,6 +144,7 @@ export function readCharacter(data: Uint8Array): Character {
     class: u8(data, 0x2f),
     age: i16(data, 0x30),
     sex: u8(data, 0x9e),
+    monsterType: u8(data, 0x9f),
     alignment: u8(data, 0xa0),
     stats,
     levels,

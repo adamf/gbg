@@ -13,6 +13,7 @@ import type { Direction, GeoMap } from '../formats/geo.js'
 import { buildArena, buildWildArena, type Arena } from './arena.js'
 import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
 import { cast, forget, ready } from './casting.js'
+import { turnOne, UNDEAD } from './undead.js'
 
 const WINDOW = 2
 
@@ -268,6 +269,39 @@ export class Battle {
         lines.push(`${f.combatant.label} HITS ${target.combatant.label} FOR ${damage}. ${target.combatant.label} IS ${defender.status.toUpperCase()}!`)
       }
     }
+    f.acted = true
+    f.moves = 0
+    return lines
+  }
+
+  /** The animated dead still on their feet. */
+  undead(): Fighter[] {
+    return this.fighters.filter((o) => o.side === 'monster' && standing(o.combatant.member.character) && o.combatant.member.character.monsterType === UNDEAD)
+  }
+
+  /** A cleric turns: up to two dice of undead, nearest first, flee or crumble. */
+  turnUndead(f: Fighter): string[] {
+    const cleric = f.combatant.member.character
+    const lines = [`${f.combatant.label} PRESENTS THE HOLY SYMBOL.`]
+    let budget = this.random(5) + 1 + this.random(5) + 1
+    const targets = this.undead().sort((a, b) => (Math.abs(a.x - f.x) + Math.abs(a.y - f.y)) - (Math.abs(b.x - f.x) + Math.abs(b.y - f.y)))
+    for (const t of targets) {
+      if (budget <= 0) break
+      const c = t.combatant.member.character
+      const result = turnOne(cleric, c, this.random)
+      if (result === 'unmoved') { lines.push(`${t.combatant.label} IS UNMOVED.`); break }
+      budget -= Math.max(1, c.hitDice)
+      if (result === 'destroyed') {
+        c.hpCurrent = 0
+        c.status = 'dead'
+        c.statusByte = 6
+        lines.push(`${t.combatant.label} CRUMBLES TO DUST!`)
+      } else {
+        c.status = 'running'
+        lines.push(`${t.combatant.label} FLEES!`)
+      }
+    }
+    if (targets.length === 0) lines.push('NOTHING HERE FEARS IT.')
     f.acted = true
     f.moves = 0
     return lines
