@@ -64,7 +64,9 @@ one server-side, or check a `.DAX` into git is the wrong change.
 Not here yet: the overland map the wilderness scripts count squares on (T's travel
 menu stands in for it), monsters' special attacks, and scrolls.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
-trip over; run it after touching the interpreter. Script commands that need
+trip over; run it after touching the interpreter. `scripts/playthrough.ts` plays
+the game for thousands of steps with a seeded party — menus, fights, camp, training —
+and reports what it saw and what hung; run a few seeds after touching the engine. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together

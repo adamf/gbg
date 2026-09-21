@@ -305,7 +305,16 @@ built yet.
 
 Training halls write the classes they teach as a mask to `0x6DA8` — bit 0 magic-user,
 bit 1 cleric, bit 2 thief, bit 3 fighter — and call PROGRAM 0, the original's party
-menu, where Train appeared. Two more area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
+menu, where Train appeared. New Phlan's hall (ECL3 block 11) runs on the city's own
+map: the city's events 10 and 17 hand over to it, and its search routine subtracts
+ten from the cell's event byte, so the schools' doors are the cells marked 12
+(clerics), 13 (magic-users), 16 (fighters) and 17 (thieves). Its arena master picks a
+character with WHO, then `CALL 0x8000` before a COMBAT with no monsters loaded: a
+sparring bout against an even match, not to the death, paid at a hundred experience
+a level (coab `calc_battle_exp`, the duel case).
+
+The hall's doorway is a cell walled on all four sides with doors in two of them. A
+four-walled cell is solid rock only when it has no door at all. Two more area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
 (hours) and how likely (percent) a resting party is interrupted, and `0x6DE2`/`0x6E6C`
 set before a COMBAT with no monsters loaded mean the temple and the shop.
 

@@ -187,10 +187,21 @@ export class Battle {
 
   // ---- turns ----------------------------------------------------------------
 
+  /** Rounds in a row in which nobody on either side struck, moved or cast. */
+  idleRounds = 0
+  private actedThisRound = false
+
+  /** Three empty rounds: the two sides cannot get at each other. */
+  get stalled(): boolean {
+    return this.idleRounds >= 3
+  }
+
   private startRound(): void {
     this.round++
     this.combat.round = this.round
     this.combat.stir()
+    if (this.round > 1) this.idleRounds = this.actedThisRound ? 0 : this.idleRounds + 1
+    this.actedThisRound = false
     this.order = this.fighters
       .filter((f) => able(f.combatant.member.character))
       .map((f) => ({ f, initiative: this.random(9) + Math.floor(f.combatant.member.character.movement / 3) }))
@@ -265,6 +276,7 @@ export class Battle {
     f.x += step.dx
     f.y += step.dy
     f.moves--
+    this.actedThisRound = true
     return true
   }
 
@@ -284,6 +296,7 @@ export class Battle {
   /** One blow, or a volley for the fighters with several: the rules of combat.ts. */
   attack(f: Fighter, target: Fighter): string[] {
     const lines: string[] = []
+    this.actedThisRound = true
     const attacker = f.combatant.member.character
     const defender = target.combatant.member.character
     const helpless = defender.status === 'asleep' || defender.status === 'held'
@@ -372,6 +385,7 @@ export class Battle {
       if (chosen.length > 0) {
         forget(me, spell.id)
         lines.push(...cast(spell, me, chosen.map((t) => t.combatant.member.character), this.random, this.combat).lines)
+        this.actedThisRound = true
         f.acted = true
         f.moves = 0
         return lines
@@ -390,9 +404,23 @@ export class Battle {
         lines.push(...this.attack(f, near[this.random(near.length - 1)]!))
         break
       }
-      const goal = target()
-      if (!goal || f.moves === 0) break
-      const next = this.stepToward(f, goal)
+      if (f.moves === 0) break
+      // Toward the nearest foe that can still be reached; failing that, any step that
+      // closes the distance, so a crowd in a corridor keeps shuffling forward.
+      const foes = this.fighters
+        .filter((o) => o.side !== f.side && standing(o.combatant.member.character))
+        .sort((a, b) => (Math.abs(a.x - f.x) + Math.abs(a.y - f.y)) - (Math.abs(b.x - f.x) + Math.abs(b.y - f.y)))
+      let next: Step | undefined
+      for (const goal of foes.slice(0, 6)) {
+        next = this.stepToward(f, goal)
+        if (next) break
+      }
+      if (!next && foes[0]) {
+        const goal = foes[0]
+        const before = Math.max(Math.abs(goal.x - f.x), Math.abs(goal.y - f.y))
+        next = EIGHT_STEPS.filter((s) => this.canMove(f, s))
+          .find((s) => Math.max(Math.abs(goal.x - f.x - s.dx), Math.abs(goal.y - f.y - s.dy)) < before)
+      }
       if (!next || !this.move(f, next)) break
     }
     return lines

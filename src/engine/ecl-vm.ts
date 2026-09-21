@@ -353,6 +353,8 @@ export const CALL_REDRAW = 0x2c90
 export const CALL_SOUND = 0xba03
 /** The next COMBAT is a duel: one party member against one foe. */
 export const CALL_DUEL = 0x8001
+/** The training hall's arena: the chosen character duels an even match of themselves. */
+export const CALL_SPAR = 0x8000
 /** Wilderness-map bookkeeping and picture-area helpers with nothing to do here. */
 export const CALL_QUIET = new Set([0x0806, 0x2c51, 0x2c4e, 0xc009, 0xc003])
 /**
@@ -393,10 +395,14 @@ export class EclVm {
         this.result = { reason: 'runaway' }
         break
       }
+      this.trace?.(this.pc)
       await this.step()
     }
     return this.result
   }
+
+  /** Called with the address of every instruction about to run; for debugging a script. */
+  trace?: (pc: number) => void
 
   private byteAt = (address: number): number => this.memory.byteAt(address)
   private readString = (address: number): string => this.memory.readString(address)

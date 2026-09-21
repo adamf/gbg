@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ITEM_RECORD_SIZE, readCharacter, readItems, CHARACTER_RECORD_SIZE } from '../src/formats/character.js'
 import { itemDisplayName, readItemNames, readItemTypes } from '../src/formats/items.js'
-import { buy, emptyPool, pay, sell, shareCoins, take } from '../src/engine/treasure.js'
+import { buy, emptyPool, goldOf, pay, sell, shareCoins, take } from '../src/engine/treasure.js'
 
 /** Inline Pascal literals with a few bytes of "code" between them, as START.EXE has. */
 function fakeExe(names: string[]): Uint8Array {
@@ -82,6 +82,18 @@ describe('the treasure pool', () => {
     expect(pay(m, 5)).toBe(true)
     expect(m.character.money.slice(3, 5)).toEqual([2, 0])
     expect(pay(m, 3)).toBe(false)
+  })
+
+  it('values every coin as the original did and spends the small ones first', () => {
+    const m = member(0, 0)
+    m.character.money[0] = 400 // copper, two gold's worth
+    m.character.money[1] = 20 // silver, one gold's worth
+    m.character.money[2] = 2 // electrum, one gold's worth
+    expect(goldOf(m)).toBe(4)
+    expect(pay(m, 5)).toBe(false)
+    expect(pay(m, 3)).toBe(true)
+    expect(goldOf(m)).toBe(1)
+    expect(m.character.money[0]).toBe(0)
   })
 
   it('buys onto a member unreadied, sells for half, and takes from the ground', () => {

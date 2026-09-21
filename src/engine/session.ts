@@ -14,7 +14,7 @@ import { canWalk, cellAt, DIRECTIONS, type Direction, type GeoMap } from '../for
 import type { GameLibrary, LevelRef, SavedGame } from '../formats/library.js'
 import { startingCell, startingFacing } from './dungeon.js'
 import {
-  CALL_DUEL, CALL_QUIET, CALL_REDRAW, CALL_WILD, CALL_SOUND, CALL_STEP_FORWARD, EclMemory, EclVm, POOL_ADDRESSES,
+  CALL_DUEL, CALL_QUIET, CALL_SPAR, CALL_REDRAW, CALL_WILD, CALL_SOUND, CALL_STEP_FORWARD, EclMemory, EclVm, POOL_ADDRESSES,
   type CombatOutcome, type EclHost, type EncounterView, type MonsterGroup, type VmWorld,
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
@@ -118,9 +118,13 @@ export class GameSession {
 
   private levelDirty = false
   private positionSetByScript = false
+  /** True only when a level was picked from the list: the party has nowhere to stand yet. */
+  private needsPlacement = false
   private running = false
   /** Set by a duel CALL: the next fight is this member alone. */
   private champion: Member | undefined
+  /** Set by the arena master: the next COMBAT is a sparring bout, not to the death. */
+  private sparring = false
   /** What TREASURE left on the ground, or a shop's shelf. */
   pool: Pool = emptyPool()
   private itemNames: string[] = []
@@ -196,6 +200,7 @@ export class GameSession {
     this.mapRef = ref
     this.textures = (await this.library.wallSetFor(ref)).textures
     this.levelDirty = true
+    this.needsPlacement = true
 
     await this.withScript(async () => {
       await this.loadScript(blockId)
@@ -206,8 +211,9 @@ export class GameSession {
   /** Picks up a saved snapshot: the same script, map and party as when it was taken. */
   async load(snapshot: Snapshot): Promise<void> {
     this.memory.restore(snapshot.memory)
-    this.roster.members = snapshot.members.map((m) => ({ character: m.character, items: m.items }))
-    this.pool = snapshot.pool ?? emptyPool()
+    // Copies again, so the snapshot can be loaded more than once.
+    this.roster.members = snapshot.members.map((m) => ({ character: structuredClone(m.character), items: structuredClone(m.items) }))
+    this.pool = structuredClone(snapshot.pool ?? emptyPool())
     this.area = snapshot.area
     this.party = snapshot.party
     this.positionSetByScript = true
@@ -236,8 +242,9 @@ export class GameSession {
       mapId: this.map?.id ?? 0,
       party: { ...this.party },
       memory: this.memory.snapshot(),
-      members: this.roster.members.map((m) => ({ character: m.character, items: m.items })),
-      pool: this.pool,
+      // Copies, so the snapshot stays as it was while the game goes on.
+      members: this.roster.members.map((m) => ({ character: structuredClone(m.character), items: structuredClone(m.items) })),
+      pool: structuredClone(this.pool),
     }
   }
 
@@ -490,10 +497,13 @@ export class GameSession {
 
   private showLevelNow(): void {
     if (!this.map) return
-    if (!this.positionSetByScript) {
+    // A script that reloads the map mid-walk (the training hall does) must not move
+    // the party; only a level picked from the list needs a place to stand.
+    if (this.needsPlacement && !this.positionSetByScript) {
       const cell = startingCell(this.map)
       this.party = { row: cell.row, col: cell.col, facing: startingFacing(this.map, cell) }
     }
+    this.needsPlacement = false
     this.ui.showLevel(this.map, this.textures, this.mapRef?.name ?? `Map ${this.map.id}`)
     this.ui.showParty(this.party)
     this.levelDirty = false
@@ -504,6 +514,7 @@ export class GameSession {
   /** Runs a fight against the groups LOAD MONSTER queued, a round at a time. */
   private async fight(groups: readonly MonsterGroup[]): Promise<CombatOutcome> {
     this.memory.write(POOL_ADDRESSES.combatResult, 0)
+    if (groups.length === 0 && this.sparring) return this.spar()
     if (groups.length === 0) {
       if (this.memory.read(POOL_ADDRESSES.enterTemple) === 1) {
         this.memory.write(POOL_ADDRESSES.enterTemple, 0)
@@ -535,6 +546,30 @@ export class GameSession {
     const random = this.random
     const outcome = await this.fightLoaded(loaded, random)
     this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : outcome === 'fled' ? 0x81 : 0x80)
+    return outcome
+  }
+
+  /**
+   * The arena's duel: the chosen character against a copy of themselves, evenly
+   * matched and not to the death. The original paid it as a hundred experience a level.
+   */
+  private async spar(): Promise<CombatOutcome> {
+    this.sparring = false
+    const member = this.roster.members[this.roster.selected]
+    if (!member) return 'won'
+    const twin: Member = {
+      character: { ...member.character, levels: [...member.character.levels], money: [0, 0, 0, 0, 0, 0, 0], memorised: [...member.character.memorised], prepared: [...member.character.prepared], attacks: { ...member.character.attacks }, control: 1, hpCurrent: member.character.hpMax, status: 'okay', statusByte: 0 },
+      items: member.items.map((item) => ({ ...item })),
+    }
+    const before = member.character.experience
+    this.champion = member
+    const outcome = await this.fightLoaded([{ member: twin, count: 1, picture: -1 }], this.random)
+    member.character.experience = before + (outcome === 'won' ? characterLevel(member.character) * 100 : 0)
+    if (member.character.hpCurrent < 1) member.character.hpCurrent = 1
+    if (member.character.status !== 'okay') { member.character.status = 'okay'; member.character.statusByte = 0 }
+    this.ui.print(outcome === 'won' ? `${member.character.name} WINS THE BOUT.` : `${member.character.name} YIELDS.`, true)
+    this.ui.party(this.roster.members, this.roster.selected)
+    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : 0x80)
     return outcome
   }
 
@@ -641,8 +676,9 @@ export class GameSession {
       })
       this.ui.party(this.roster.members, this.roster.selected)
       if (result === 'run') {
+        // Quicker than the pursuit, or a fight in which nobody can reach anybody.
         const chase = Math.max(0, ...battle.combat.monstersStanding.map((m) => m.member.character.movement))
-        if (this.roster.movement().min + random(5) >= chase) { outcome = 'fled'; break }
+        if (battle.stalled || this.roster.movement().min + random(5) >= chase) { outcome = 'fled'; break }
         await this.ui.battleUpdate(battle, ['THE PARTY CANNOT GET AWAY!'])
       }
       battle.endTurn()
@@ -1160,6 +1196,7 @@ export class GameSession {
           case CALL_STEP_FORWARD: return
           case CALL_REDRAW: ui.showParty(this.party); return
           case CALL_SOUND: return
+          case CALL_SPAR: this.sparring = true; return
           case CALL_DUEL: {
             const index = await ui.who('WHO WILL FIGHT?', this.roster.members)
             this.champion = this.roster.members[index]

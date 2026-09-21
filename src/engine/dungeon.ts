@@ -25,11 +25,13 @@ export interface WallFace {
 }
 
 /**
- * A cell walled in on all four sides is solid rock, not a room: the original
- * renderer never showed its inside and neither should we.
+ * A cell walled in on all four sides, with no door in any of them, is solid rock,
+ * not a room: the original renderer never showed its inside and neither should we.
+ * A door counts as a way in — New Phlan's training hall is a four-walled cell with
+ * doors on two sides.
  */
 export function isSolid(cell: GeoCell): boolean {
-  return DIRECTIONS.every((d) => cell.walls[d] !== 0)
+  return DIRECTIONS.every((d) => cell.walls[d] !== 0 && cell.doors[d] === 0)
 }
 
 export function openCells(map: GeoMap): GeoCell[] {

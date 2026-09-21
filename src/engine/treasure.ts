@@ -45,25 +45,37 @@ export function shareCoins(pool: Pool, members: readonly Member[]): void {
   }
 }
 
-/** Gold and platinum count; the game priced things in gold. */
+/** What each coin is worth in copper: copper, silver, electrum, gold, platinum. */
+const PER_COPPER = [1, 10, 100, 200, 1000] as const
+
+/** A member's coins valued in gold, the way the original priced things. Gems and jewellery do not count. */
 export function goldOf(member: Member): number {
   const money = member.character.money
-  return (money[3] ?? 0) + (money[4] ?? 0) * 5
+  const coppers = PER_COPPER.reduce((total, worth, kind) => total + (money[kind] ?? 0) * worth, 0)
+  return Math.floor(coppers / PER_COPPER[3])
 }
 
-/** Pays `price` in gold from a member, breaking platinum when gold runs short. Returns false if they cannot. */
+/**
+ * Pays `price` in gold from a member, spending the small coins first and making
+ * change in the largest coins (coab `SubtractGoldWorth`). Returns false if they cannot.
+ */
 export function pay(member: Member, price: number): boolean {
-  const money = member.character.money
   if (goldOf(member) < price) return false
-  let due = price
-  const gold = money[3] ?? 0
-  const fromGold = Math.min(gold, due)
-  money[3] = gold - fromGold
-  due -= fromGold
-  if (due > 0) {
-    const platinum = Math.ceil(due / 5)
-    money[4] = (money[4] ?? 0) - platinum
-    money[3] = (money[3] ?? 0) + platinum * 5 - due
+  const money = member.character.money
+  let coppers = price * PER_COPPER[3]
+  for (let kind = 0; kind < PER_COPPER.length && coppers > 0; kind++) {
+    const worth = PER_COPPER[kind]!
+    const spend = Math.min(money[kind] ?? 0, Math.floor(coppers / worth) + 1)
+    coppers -= worth * spend
+    money[kind] = (money[kind] ?? 0) - spend
+  }
+  // Overpaid with a big coin: the change comes back, largest coins first.
+  let change = -coppers
+  for (let kind = PER_COPPER.length - 1; kind >= 0 && change > 0; kind--) {
+    const worth = PER_COPPER[kind]!
+    const back = Math.floor(change / worth)
+    change -= worth * back
+    money[kind] = (money[kind] ?? 0) + back
   }
   return true
 }
