@@ -77,7 +77,10 @@ menu stands in for it), monsters' special attacks, and scrolls.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. `scripts/playthrough.ts` plays
 the game for thousands of steps with a seeded party — menus, fights, camp, training —
-and reports what it saw and what hung; run a few seeds after touching the engine. Script commands that need
+and reports what it saw and what hung; run a few seeds after touching the engine.
+`PLAY_QUEST=1` makes it play the first commission instead of wandering: clear the
+Slums (every event square, every fight), walk to the city hall and collect from the
+clerk. It has done so; that is how far the story is proven to run. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together

@@ -42,6 +42,13 @@ let wantRest = false
 
 let trained = 0
 let lastStatus = ''
+/**
+ * PLAY_QUEST: play the first commission instead of wandering — hunt in the Slums
+ * until the block is cleared (global 0x4ABB reaches 254), walk to the city hall
+ * (city event 27) and find the clerk. Prints every text along the way.
+ */
+const quest = process.env.PLAY_QUEST ? { phase: 'slums' as 'slums' | 'city' | 'hall' | 'done', log: [] as string[], started: 0, visited: new Set<string>() } : undefined
+const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
 const sellable = () => session.roster.members.some((m) => m.items.some((i) => !i.readied))
@@ -57,6 +64,7 @@ const ui: SessionUi = {
     if (text.includes('IS NOW A LEVEL')) trained++
     if (text.includes('THE SHOPKEEPER PAYS')) sold++
     if (text.includes('WINS THE BOUT') || text.includes('YIELDS')) dueled = true
+    if (quest && text.trim()) quest.log.push(`${quest.phase}: ${text.trim().slice(0, 110)}`)
     if (process.env.PLAY_TEXTS && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
     else if (process.env.PLAY_DEBUG && lastStatus.startsWith('in the') && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
     if (text.trim()) texts.push(text.trim().slice(0, 80))
@@ -81,7 +89,7 @@ const ui: SessionUi = {
     if (prompt?.startsWith('CAMP')) return wantRest && !prompt.includes('EVERYONE IS WELL') ? Math.max(0, find('REST')) : find('LEAVE')
     if (find('QUICK FIGHT') >= 0) { fights++; return find('QUICK FIGHT') }
     if (find('FIGHT') >= 0 && find('RUN') >= 0) return find('FIGHT')
-    if (find('COMBAT') >= 0 && find('WAIT') >= 0) return random(9) < 7 ? find('COMBAT') : find('FLEE')
+    if (find('COMBAT') >= 0 && find('WAIT') >= 0) return quest ? find('COMBAT') : random(9) < 7 ? find('COMBAT') : find('FLEE')
     if (find('SHARE') >= 0) return find('SHARE')
     if (find('LEAVE THE REST') >= 0) {
       // Take what can be sold, up to a pack each; the shops turn it into training gold.
@@ -89,6 +97,8 @@ const ui: SessionUi = {
       const take = labels.findIndex((l) => l.startsWith('TAKE '))
       return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
     }
+    if (quest && find('ATTACK') >= 0 && labels.length <= 3) return find('ATTACK')
+    if (quest && find('YES') === 0 && labels.length === 2) return 0
     if (prompt?.startsWith('THE TEMPLE.')) {
       if ((menuSeen.get(key) ?? 0) > 4) return find('LEAVE')
       const dead = session.roster.members.some((m) => m.character.status === 'dead')
@@ -221,12 +231,13 @@ function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
 let target: { row: number; col: number; events: string; until: number } | undefined
 
 /** The first command of a shortest walk to any cell with one of the events, or nothing. */
-function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[], step: number): 'forward' | 'turnLeft' | 'turnRight' | undefined {
+function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[] | ReadonlySet<string>, step: number): 'forward' | 'turnLeft' | 'turnRight' | undefined {
   const key = (row: number, col: number) => `${row},${col}`
-  const wanted = events.join(',')
+  const cells = events instanceof Set ? events : undefined
+  const wanted = cells ? [...cells].join(';') : (events as readonly number[]).join(',')
   if (target && (target.events !== wanted || target.until < step || (target.row === from.row && target.col === from.col))) target = undefined
   const isGoal = (row: number, col: number, event: number) =>
-    target ? row === target.row && col === target.col : events.includes(event)
+    target ? row === target.row && col === target.col : cells ? cells.has(key(row, col)) : (events as readonly number[]).includes(event)
   const prev = new Map<string, { row: number; col: number; dir: Direction } | null>([[key(from.row, from.col), null]])
   const queue = [{ row: from.row, col: from.col }]
   while (queue.length > 0) {
@@ -295,6 +306,35 @@ for (let step = 0; step < STEPS; step++) {
     wantRest = false
   }
   const before = `${session.party.row},${session.party.col},${session.scriptId}`
+  if (quest) {
+    const cleared = mem().read(0x4abb) >= 254
+    if (quest.phase === 'slums' && cleared) { quest.phase = 'city'; console.log(`step ${step}: THE SLUMS ARE CLEARED (kills counted ${mem().read(0x4a80)})`) }
+    if (quest.phase === 'slums' && session.scriptId !== 20 && !session.busy) {
+      // Strayed out of the block: back to its gate.
+      await session.enterLevel((await library.levelById(20, 2))!)
+      continue
+    }
+    if (quest.phase === 'city' && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) {
+      await session.enterLevel((await library.levelById(0, 3))!)
+      continue
+    }
+    if (quest.phase === 'city' && session.scriptId === 8) { quest.phase = 'hall'; console.log(`step ${step}: IN THE CITY HALL`) }
+    if (quest.phase === 'hall' && quest.log.some((l) => /REWARD|CLERK SPEAKS/.test(l))) { quest.phase = 'done'; console.log(`step ${step}: THE CLERK HAS SPOKEN`); break }
+    if (quest.phase === 'city' && session.map && !session.busy) {
+      const routed = routeTo(session.map, session.party, [27], step)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if (quest.phase === 'slums' && session.map && !session.busy) {
+      // The block's buildings hold the fights the wandering ones stop short of: walk
+      // to every event square once, nearest first.
+      const here = `${session.scriptId}:${session.party.row},${session.party.col}`
+      quest.visited.add(here)
+      const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
+      const routed = unvisited.size > 0 ? routeTo(session.map, session.party, unvisited, step) : undefined
+      if (process.env.PLAY_DEBUG && step < 60) console.log(`quest step ${step}: at ${here} ${session.party.facing} -> ${routed ?? 'no route'} (target ${target ? `${target.row},${target.col}` : '-'}; ${unvisited.size} cells left)`)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+  }
   const goal = wantsTraining()
   const doors = goal === 'hall'
     ? [...new Set(session.roster.members.flatMap((m) => readyToTrain(m.character, 0x7f).map((track) => SCHOOL_OF[track] ?? 0))), ...(dueled ? [] : [14])].filter(Boolean)
@@ -323,6 +363,10 @@ for (let step = 0; step < STEPS; step++) {
 }
 
 console.log(`\n${Date.now() - started}ms, ${menus} menus, ${fights} fights (${wins} won, ${losses} lost), ${deaths} party deaths, ${raises} raised, ${reloads} reloads, ${sold} items sold, ${trained} levels trained`)
+if (quest) {
+  console.log(`quest: ended in phase ${quest.phase}; slums flag ${mem().read(0x4abb)}, kills ${mem().read(0x4a80)}`)
+  console.log('quest texts:\n  ' + [...new Set(quest.log)].slice(-60).join('\n  '))
+}
 console.log('areas:', [...areas.entries()].map(([id, n]) => `${mapName(library.game.id, id)} ×${n}`).join(', '))
 console.log('party:', session.roster.members.map((m) => `${m.character.name} L${Math.max(...m.character.levels)} ${m.character.hpCurrent}/${m.character.hpMax} xp${m.character.experience} ${m.character.status}`).join(' | '))
 {
