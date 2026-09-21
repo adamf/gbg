@@ -1123,7 +1123,7 @@ export class GameSession {
   private async temple(): Promise<void> {
     for (;;) {
       const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax || m.character.status !== 'okay')
-      const gold = this.roster.members.reduce((n, m) => n + (m.character.money[3] ?? 0), 0)
+      const gold = this.roster.members.reduce((n, m) => n + goldOf(m), 0)
       const dead = this.roster.members.filter((m) => m.character.status === 'dead')
       const choice = await this.ui.menu(`THE TEMPLE. YOU HAVE ${gold} GOLD.`, ['HEAL THE PARTY', `RAISE DEAD — ${RAISE_DEAD_COST} GOLD`, 'LEAVE'], 'vertical')
       if (choice === 2) return
