@@ -6,6 +6,7 @@
  * character that the interpreter maps in at 0x6B00. Combat itself is not here yet.
  */
 
+import { takeDamage } from './combat.js'
 import { CLASS_TRACKS, type Character, type Item, type Status } from '../formats/character.js'
 import type { CharacterHook, DamageSpec, Treasure } from './ecl-vm.js'
 
@@ -58,15 +59,7 @@ export class Roster {
 
   /** Takes hit points off a member, knocking them out at zero and killing them well past it. */
   hurt(member: Member, amount: number): void {
-    const c = member.character
-    const left = c.hpCurrent - amount
-    if (left > 0) {
-      c.hpCurrent = left
-      return
-    }
-    c.hpCurrent = 0
-    c.status = left <= -10 ? 'dead' : 'unconscious'
-    c.statusByte = c.status === 'dead' ? 6 : 4
+    takeDamage(member.character, amount)
   }
 
   /**

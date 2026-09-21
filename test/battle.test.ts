@@ -182,3 +182,76 @@ describe('furniture and the wilderness', () => {
     expect(wild.tile(0, 0)).toBe(22)
   })
 })
+
+describe('the rules of the round', () => {
+  function named(name: string, hp: number, race = 7, extra: (data: Uint8Array) => void = () => {}) {
+    const data = new Uint8Array(CHARACTER_RECORD_SIZE)
+    data[0] = name.length
+    for (let i = 0; i < name.length; i++) data[1 + i] = name.charCodeAt(i)
+    data[0x2e] = race
+    data[0x32] = hp
+    data[0x11b] = hp
+    data[0x111] = 60 - 10
+    data[0x2d] = 60 - 20
+    data[0xa1] = 2
+    data[0x115] = 1
+    data[0x117] = 8
+    data[0x119] = 4
+    data[0x11c] = 12
+    for (let i = 0; i < 5; i++) data[0x6d + i] = 17
+    extra(data)
+    return readCharacter(data)
+  }
+
+  it('bleeds the dying a point a round and regrows a downed troll unless it is pinned', () => {
+    const party = [{ member: { character: named('HERO', 20), items: [] }, label: 'HERO' }, { member: { character: named('SECOND', 20), items: [] }, label: 'SECOND' }]
+    const monsters = labelMonsters([{ member: { character: named('TROLL', 12, 0), items: [] }, count: 1 }])
+    const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 0)
+    const hero = battle.fighters.find((f) => f.side === 'party')!
+    const troll = battle.fighters.find((f) => f.side === 'monster')!
+    hero.combatant.member.character.status = 'dying'
+    hero.combatant.member.character.hpCurrent = -8
+    troll.combatant.member.character.status = 'unconscious'
+    troll.combatant.member.character.hpCurrent = 6
+    // Two rounds pass.
+    const rounds = battle as unknown as { startRound(): void }
+    rounds.startRound()
+    rounds.startRound()
+    expect(hero.combatant.member.character.status).toBe('dead')
+    expect(troll.combatant.member.character.status).toBe('okay')
+    expect(battle.roundLines.some((l) => l.includes('RISES'))).toBe(true)
+  })
+
+  it('a ghoul paralyses on a failed save, a fighter sweeps the small fry, and the edge is the way out', () => {
+    const party = [{ member: { character: named('HERO', 20, 7, (d) => { d[0x98] = 3 }), items: [] }, label: 'HERO' }]
+    const monsters = labelMonsters([{ member: { character: named('KOBOLD', 3, 0, (d) => { d[0x73] = 0 }), items: [] }, count: 3 }])
+    const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 18)
+    const hero = battle.fighters.find((f) => f.side === 'party')!
+    const kobolds = battle.fighters.filter((f) => f.side === 'monster')
+    for (const [i, k] of kobolds.entries()) { k.x = hero.x + (i - 1); k.y = hero.y - 1 }
+    const lines = battle.attack(hero, kobolds[1]!)
+    expect(lines.filter((l) => l.includes('SWEEPS')).length).toBe(2)
+
+    const ghoul = named('GHOUL', 10, 0)
+    const victim = named('VICTIM', 20)
+    const b2 = new Battle(corridor(), [{ member: { character: victim, items: [] }, label: 'VICTIM' }], labelMonsters([{ member: { character: ghoul, items: [] }, count: 1 }]), { row: 8, col: 8, facing: 'north' }, 1, () => 14)
+    const g = b2.fighters.find((f) => f.side === 'monster')!
+    const v = b2.fighters.find((f) => f.side === 'party')!
+    g.x = v.x; g.y = v.y - 1
+    const hit = b2.attack(g, v)
+    expect(hit.some((l) => l.includes('PARALYZED'))).toBe(true)
+    expect(victim.status).toBe('held')
+
+    // Any open square on the edge, and a step onto it from inside.
+    const runner = battle.fighters.find((f) => f.side === 'party')!
+    runner.moves = 99
+    let placed = false
+    for (let x = 1; x < battle.width - 1 && !placed; x++) {
+      if (battle.isSolid(x, 0) || battle.isSolid(x, 1)) continue
+      runner.x = x; runner.y = 1
+      placed = battle.move(runner, { dx: 0, dy: -1 })
+    }
+    expect(placed).toBe(true)
+    expect(runner.combatant.member.character.status).toBe('running')
+  })
+})

@@ -50,18 +50,81 @@ function standing(c: Combatant): boolean {
   return (s === 'okay' || s === 'asleep' || s === 'held') && c.member.character.hpCurrent > 0
 }
 
+/** A downed troll is still in the fight: it can be finished, and it can get up. */
+function lying(c: Combatant): boolean {
+  const character = c.member.character
+  return character.race === 0 && character.status === 'unconscious'
+}
+
+/** Anyone a blow can land on: the standing, and a troll lying regenerating. */
+export function targetable(c: Combatant): boolean {
+  return standing(c) || lying(c)
+}
+
 function helpless(c: Combatant): boolean {
   const s = c.member.character.status
   return s === 'asleep' || s === 'held'
 }
 
-function down(c: Combatant, overkill: number): void {
-  const character = c.member.character
-  character.hpCurrent = 0
-  const dead = overkill >= 10 || character.race === 0 || character.status === 'asleep' || character.status === 'held'
-  character.status = dead ? 'dead' : 'unconscious'
-  character.statusByte = dead ? 6 : 4
+/** Rolls a d20 against one of the five saving throws; index 0 is paralysis, poison and death. */
+export function saves(character: Character, index: number, random: Random): boolean {
+  const need = character.savingThrows[index] ?? 20
+  return random(19) + 1 >= need
 }
+
+/** What a monster is, by its name: the kinds the rules single out. */
+export function monsterKind(character: Character): 'troll' | 'ghoul' | 'poisoner' | 'drainer' | 'plain' {
+  const name = character.name.toUpperCase()
+  if (name.includes('TROLL')) return 'troll'
+  if (/GHOUL|GHAST/.test(name)) return 'ghoul'
+  if (/SPIDER|CENTIPEDE|SNAKE|SCORPION|WYVERN|NAGA|ASSASSIN|COBRA|VIPER/.test(name)) return 'poisoner'
+  if (/WIGHT|WRAITH|SPECTRE|VAMPIRE/.test(name)) return 'drainer'
+  return 'plain'
+}
+
+/**
+ * Hit points come off. At exactly zero a character is unconscious; below it they
+ * are dying and bleed a point a round until minus ten, which is death (the manual's
+ * rule; a round to bandage them stops it). Monsters die at zero, and so does anyone
+ * helpless. A downed troll is only unconscious unless fire did it, and gets up
+ * again unless somebody stands on it — see Battle.
+ */
+export function takeDamage(character: Character, amount: number, fire = false): 'hurt' | 'unconscious' | 'dying' | 'dead' {
+  const helpless = character.status === 'asleep' || character.status === 'held'
+  const left = character.hpCurrent - amount
+  if (fire) character.burnt = true
+  if (left > 0) {
+    character.hpCurrent = left
+    if (character.status === 'asleep') character.status = 'okay'
+    return 'hurt'
+  }
+  const troll = character.race === 0 && monsterKind(character) === 'troll' && !character.burnt
+  if (character.race === 0 && !troll) {
+    character.hpCurrent = 0
+    character.status = 'dead'
+    character.statusByte = 6
+    return 'dead'
+  }
+  if (troll) {
+    // Lying already: a blow now is the end of it.
+    if (character.status === 'unconscious') { character.hpCurrent = 0; character.status = 'dead'; character.statusByte = 6; return 'dead' }
+    character.hpCurrent = Math.max(left, -9)
+    character.status = 'unconscious'
+    character.statusByte = 4
+    return 'unconscious'
+  }
+  if (left <= -10 || helpless) {
+    character.hpCurrent = 0
+    character.status = 'dead'
+    character.statusByte = 6
+    return 'dead'
+  }
+  character.hpCurrent = left
+  character.status = left === 0 ? 'unconscious' : 'dying'
+  character.statusByte = left === 0 ? 4 : 5
+  return character.status
+}
+
 
 export class Combat {
   round = 0
@@ -91,7 +154,7 @@ export class Combat {
   }
 
   get over(): boolean {
-    return this.party.filter(alive).length === 0 || this.monstersStanding.length === 0
+    return this.party.filter(alive).length === 0 || this.monsters.filter(targetable).length === 0
   }
 
   bless(bonus: number): void {
@@ -119,10 +182,6 @@ export class Combat {
   /** A spell dropped someone; nothing more to do, the status says it. */
   fell(_character: Character): void {}
 
-  /** Woken by a blow: a sleeping foe that is hit and survives wakes up. */
-  private wake(c: Combatant): void {
-    if (c.member.character.status === 'asleep') { c.member.character.status = 'okay' }
-  }
 
   /**
    * Sleep and paralysis wear off: after ten rounds, or at once when nobody on either
@@ -156,13 +215,13 @@ export class Combat {
     for (const attacker of order) {
       if (!alive(attacker) || this.acted.has(attacker.member.character)) continue
       const ours = this.party.includes(attacker)
-      const foes = ours ? this.monstersStanding : this.partyStanding
+      const foes = ours ? (this.monstersStanding.length > 0 ? this.monstersStanding : this.monsters.filter(targetable)) : this.partyStanding
       if (foes.length === 0) break
       // Helpless foes are finished off first; otherwise anyone.
       const easy = foes.filter(helpless)
       const target = (easy.length > 0 ? easy : foes)[this.random((easy.length > 0 ? easy : foes).length - 1)]!
       const attacks = Math.max(1, Math.round(attacker.member.character.attacks.count / 2))
-      for (let i = 0; i < attacks && standing(target); i++) {
+      for (let i = 0; i < attacks && targetable(target); i++) {
         const roll = this.random(19) + 1 + this.hitModifier(ours)
         const defender = { ...target.member.character, ac: this.acOf(target.member.character) }
         if (!helpless(target) && !hits(attacker.member.character, defender, roll)) {
@@ -170,19 +229,12 @@ export class Combat {
           continue
         }
         const damage = rollDamage(attacker.member.character, this.random) * (helpless(target) ? 2 : 1)
-        const left = target.member.character.hpCurrent - damage
-        if (left > 0) {
-          target.member.character.hpCurrent = left
-          this.wake(target)
-          lines.push(`${attacker.label} HITS ${target.label} FOR ${damage}.`)
-        } else {
-          down(target, -left)
-          lines.push(`${attacker.label} HITS ${target.label} FOR ${damage}. ${target.label} IS ${target.member.character.status.toUpperCase()}!`)
-        }
+        const result = takeDamage(target.member.character, damage)
+        lines.push(`${attacker.label} HITS ${target.label} FOR ${damage}.${result === 'hurt' ? '' : ` ${target.label} IS ${result.toUpperCase()}!`}`)
       }
     }
     this.acted.clear()
-    this.log.push(...lines)
+    if (this.log.length < 2000) this.log.push(...lines)
     return lines
   }
 
@@ -199,10 +251,19 @@ export class Combat {
       }, 0)
   }
 
-  /** Clears what a fight did to the party: sleepers wake, the held are let go. */
+  /**
+   * Clears what a fight did to the party: sleepers wake, the held are let go, those
+   * who ran come back, and the dying are bandaged now that there is time.
+   */
   finish(): void {
     for (const c of this.party) {
-      if (helpless(c)) c.member.character.status = 'okay'
+      const character = c.member.character
+      if (helpless(c) || character.status === 'running') { character.status = 'okay'; character.statusByte = 0 }
+      if (character.status === 'dying') { character.status = 'unconscious'; character.statusByte = 4; character.hpCurrent = 0 }
+    }
+    // A troll left lying is dead once the party walks away.
+    for (const m of this.monsters) {
+      if (m.member.character.status === 'unconscious') { m.member.character.status = 'dead'; m.member.character.statusByte = 6; m.member.character.hpCurrent = 0 }
     }
   }
 }

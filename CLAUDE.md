@@ -48,9 +48,16 @@ one server-side, or check a `.DAX` into git is the wrong change.
   random loot rolls on the original's table and is built from shipped records of the
   same type, shops buy and sell, and items carry the names the game printed, scanned
   from START.EXE. V shows a character sheet.
-- **The fight, seen** — a blow is a lunge, a shot an arrow in flight, a spell its own
-  light: a streak for a missile, a burst for a fireball, a bolt for lightning,
-  sparkles on the charmed and the healed. Lights over the art, never repainting it.
+- **The fight, seen** — the party's icons put together from CBODY and CHEAD as the
+  original's icon editor did, swapped to their action pose for a blow; the missiles
+  and spell-lights from COMSPR — arrows, thrown axes and darts, sling stones, the
+  bolt, the sparkles, the burst — flying and flashing over the art, never repainting it.
+- **The rules of the round** — zero hit points is unconscious, below it dying and
+  bleeding a point a round to death at minus ten unless bandaged (B); trolls mend
+  three a round and get up unless burnt or stood on, and must be finished; ghouls
+  paralyse, spiders poison, wights drain, each with its save; fighters sweep small fry;
+  the field's edge is the way out; rest takes a day a hit point; the halls hold to the
+  manual's race limits; shops appraise gems.
 
 - **Outdoors** — when a script clears the in-dungeon word the map is shown from above
   and a square takes an hour; the wilderness blocks (25 to 27) carry their own

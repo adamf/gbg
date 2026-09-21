@@ -74,6 +74,8 @@ export interface Character {
   /** The original's health byte; see STATUSES. */
   statusByte: number
   status: Status
+  /** Fire or acid has touched them: a troll so marked does not regenerate. Not saved. */
+  burnt?: boolean
   attacks: { count: number; dice: number; sides: number; bonus: number; range?: number; missile?: number }
   /** Old-to-new colour pairs, a nibble each, applied to the combat icon. */
   iconColours: number[]

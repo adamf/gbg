@@ -55,3 +55,13 @@ describe('training', () => {
     expect(cleric.spellSlots).toEqual([4, 3, 0, 0, 0, 0])
   })
 })
+
+describe('race limits', () => {
+  it('stops a dwarf fighter at ninth and lets a human go on', async () => {
+    const { levelLimit } = await import('../src/engine/training.js')
+    expect(levelLimit(1, 'fighter')).toBe(9)
+    expect(levelLimit(1, 'magic-user')).toBe(0)
+    expect(levelLimit(2, 'magic-user')).toBe(11)
+    expect(levelLimit(7, 'fighter')).toBe(99)
+  })
+})

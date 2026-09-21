@@ -24,8 +24,9 @@ if (!folder) {
 const STEPS = Number(stepsArg ?? 2000)
 let seed = Number(seedArg ?? 1)
 const random = (max: number): number => {
+  // The high bits of the generator: its low bits cycle, and dice cut from them miss forever.
   seed = (seed * 1664525 + 1013904223) >>> 0
-  return seed % (max + 1)
+  return Math.floor(((seed >>> 8) / 0x1000000) * (max + 1))
 }
 
 const notes = new Map<string, number>()
@@ -63,6 +64,7 @@ const ui: SessionUi = {
   newLine: () => {},
   menu: async (prompt, items) => {
     menus++
+    if (process.env.PLAY_TEXTS) console.log(`  menu: ${prompt ?? ''} [${items.join(', ')}]`)
     const key = `${prompt ?? ''} | ${items.join(', ')}`.slice(0, 120)
     menuSeen.set(key, (menuSeen.get(key) ?? 0) + 1)
     if (menus > 200_000) throw new Error(`menu loop: ${key}`)
@@ -87,7 +89,14 @@ const ui: SessionUi = {
       const take = labels.findIndex((l) => l.startsWith('TAKE '))
       return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
     }
-    if (prompt === 'THE SHOP.') return sellable() ? find('SELL') : find('LEAVE')
+    if (prompt?.startsWith('THE TEMPLE.')) {
+      const dead = session.roster.members.some((m) => m.character.status === 'dead')
+      const purse = session.roster.members.reduce((n, m) => n + goldOf(m), 0)
+      if (dead && purse >= 1000) return find('RAISE')
+      return session.roster.members.some((m) => m.character.hpCurrent < m.character.hpMax) && purse > 20 ? find('HEAL') : find('LEAVE')
+    }
+    if (prompt === 'THE SHOP.') return sellable() ? find('SELL') : session.roster.members.some((m) => (m.character.money[5] ?? 0) + (m.character.money[6] ?? 0) > 0) ? find('APPRAISE') : find('LEAVE')
+    if (prompt === 'WHOSE?') return session.roster.members.findIndex((m) => (m.character.money[5] ?? 0) + (m.character.money[6] ?? 0) > 0)
     if (prompt === 'SELL WHAT?') { const at = session.roster.members[seller]?.items.findIndex((i) => !i.readied) ?? -1; return at >= 0 ? at : labels.length - 1 }
     // Leave small menus alone the first few times; after that try the other answers,
     // or a door that puts the party back outside is entered forever.
@@ -102,7 +111,7 @@ const ui: SessionUi = {
   spriteOff: () => {},
   monsters: () => {},
   combatRound: async () => 'fight',
-  battleMode: async () => { fights++; return fights % 2 === 0 ? 'tactical' : 'quick' },
+  battleMode: async () => { fights++; return process.env.PLAY_MODE === 'tactical' || (process.env.PLAY_MODE !== 'quick' && fights % 2 === 0) ? 'tactical' : 'quick' },
   battleArt: () => {},
   battleUpdate: async (battle, lines) => {
     if (process.env.PLAY_DEBUG && battle.combat.round >= 44 && battle.combat.round <= 45) console.log(`  monsters: ${lines.join(' ') || 'nothing'}`)

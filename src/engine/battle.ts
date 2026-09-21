@@ -12,7 +12,7 @@ import type { Spell } from '../formats/spells.js'
 import type { Character } from '../formats/character.js'
 import type { Direction, GeoMap } from '../formats/geo.js'
 import { buildArena, buildWildArena, type Arena } from './arena.js'
-import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
+import { Combat, hits, monsterKind, rollDamage, saves, takeDamage, targetable, type Combatant, type Random } from './combat.js'
 import { cast, forget, ready } from './casting.js'
 import { turnOne, UNDEAD } from './undead.js'
 import { SPRITE } from './sprites.js'
@@ -243,6 +243,7 @@ export class Battle {
     this.combat.stir()
     if (this.round > 1) this.idleRounds = this.actedThisRound ? 0 : this.idleRounds + 1
     this.actedThisRound = false
+    this.roundLines = this.round > 1 ? this.passOfTime() : []
     this.order = this.fighters
       .filter((f) => able(f.combatant.member.character))
       .map((f) => ({ f, initiative: this.random(9) + Math.floor(f.combatant.member.character.movement / 3) }))
@@ -254,6 +255,36 @@ export class Battle {
     }
     this.turn = 0
     this.combat.acted.clear()
+  }
+
+  /** What the turn of a round did on its own: the bleeding, the trolls. Read once. */
+  roundLines: string[] = []
+
+  /**
+   * The dying lose a point a round and die at minus ten. A downed troll mends
+   * three points a round and gets up whole, unless it was burnt or somebody is
+   * standing on it; a troll on its feet mends the same.
+   */
+  private passOfTime(): string[] {
+    const lines: string[] = []
+    for (const f of this.fighters) {
+      const c = f.combatant.member.character
+      if (c.status === 'dying') {
+        c.hpCurrent--
+        if (c.hpCurrent <= -10) { c.status = 'dead'; c.statusByte = 6; c.hpCurrent = 0; lines.push(`${f.combatant.label} HAS DIED.`) }
+        continue
+      }
+      if (c.race === 0 && monsterKind(c) === 'troll' && !c.burnt) {
+        if (c.status === 'okay' && c.hpCurrent < c.hpMax) c.hpCurrent = Math.min(c.hpMax, c.hpCurrent + 3)
+        else if (c.status === 'unconscious') {
+          const pinned = this.fighters.some((o) => o !== f && o.x === f.x && o.y === f.y && standing(o.combatant.member.character))
+          if (pinned) continue
+          c.hpCurrent = Math.min(c.hpMax, c.hpCurrent + 3)
+          if (c.hpCurrent >= c.hpMax) { c.status = 'okay'; c.statusByte = 0; lines.push(`${f.combatant.label} RISES AGAIN!`) }
+        }
+      }
+    }
+    return lines
   }
 
   get current(): Fighter | undefined {
@@ -320,11 +351,18 @@ export class Battle {
     f.y += step.dy
     f.moves--
     this.actedThisRound = true
+    // The field's edge is the way out: a party member who reaches it has run.
+    if (f.side === 'party' && (f.x === 0 || f.y === 0 || f.x === this.width - 1 || f.y === this.height - 1)) {
+      f.combatant.member.character.status = 'running'
+      f.combatant.member.character.statusByte = 3
+      f.moves = 0
+      f.acted = true
+    }
     return true
   }
 
   neighbours(f: Fighter): Fighter[] {
-    const foes = this.fighters.filter((o) => o.side !== f.side && standing(o.combatant.member.character))
+    const foes = this.fighters.filter((o) => o.side !== f.side && targetable(o.combatant))
     return foes.filter((o) => Math.abs(o.x - f.x) <= 1 && Math.abs(o.y - f.y) <= 1)
   }
 
@@ -348,7 +386,7 @@ export class Battle {
     const helpless = defender.status === 'asleep' || defender.status === 'held'
     const attacks = Math.max(1, Math.round(attacker.attacks.count / 2))
     const ours = f.side === 'party'
-    for (let i = 0; i < attacks && standing(defender); i++) {
+    for (let i = 0; i < attacks && targetable(target.combatant); i++) {
       const roll = this.random(19) + 1 + this.combat.hitModifier(ours)
       if (!helpless && !hits(attacker, { ...defender, ac: this.combat.acOf(defender) }, roll)) {
         lines.push(`${f.combatant.label} MISSES ${target.combatant.label}.`)
@@ -356,22 +394,82 @@ export class Battle {
       }
       const damage = rollDamage(attacker, this.random) * (helpless ? 2 : 1)
       effect.hit = true
-      const left = defender.hpCurrent - damage
-      if (left > 0) {
-        defender.hpCurrent = left
-        if (defender.status === 'asleep') defender.status = 'okay'
-        lines.push(`${f.combatant.label} HITS ${target.combatant.label} FOR ${damage}.`)
-      } else {
-        defender.hpCurrent = 0
-        const dead = -left >= 10 || defender.race === 0 || helpless
-        defender.status = dead ? 'dead' : 'unconscious'
-        defender.statusByte = dead ? 6 : 4
-        lines.push(`${f.combatant.label} HITS ${target.combatant.label} FOR ${damage}. ${target.combatant.label} IS ${defender.status.toUpperCase()}!`)
+      const fire = attacker.attacks.missile === SPRITE.flask
+      const result = takeDamage(defender, damage, fire)
+      lines.push(`${f.combatant.label} HITS ${target.combatant.label} FOR ${damage}.${result === 'hurt' ? '' : ` ${target.combatant.label} IS ${result.toUpperCase()}!`}`)
+      if (result === 'hurt' && !ours) lines.push(...this.specialAttack(attacker, target))
+    }
+    // A fighter sweeps: one blow at every other small creature within reach.
+    if (melee && defender.hitDice < 1 && fighterLevel(attacker) > 0) {
+      for (const other of this.neighbours(f)) {
+        if (other === target || other.combatant.member.character.hitDice >= 1) continue
+        const roll = this.random(19) + 1 + this.combat.hitModifier(ours)
+        const c = other.combatant.member.character
+        if (!hits(attacker, { ...c, ac: this.combat.acOf(c) }, roll)) { lines.push(`${f.combatant.label} SWEEPS AT ${other.combatant.label} AND MISSES.`); continue }
+        const damage = rollDamage(attacker, this.random)
+        const result = takeDamage(c, damage)
+        lines.push(`${f.combatant.label} SWEEPS ${other.combatant.label} FOR ${damage}.${result === 'hurt' ? '' : ` ${other.combatant.label} IS ${result.toUpperCase()}!`}`)
       }
     }
     f.acted = true
     f.moves = 0
     return lines
+  }
+
+  /**
+   * What a monster's touch does beyond the wound, by its kind: a ghoul's paralysis,
+   * a spider's poison, a wight's drain. Each allows the save the manual names; the
+   * kinds are read off the monster's name, since the records do not say.
+   */
+  private specialAttack(attacker: Character, target: Fighter): string[] {
+    const victim = target.combatant.member.character
+    if (victim.race === 0) return []
+    switch (monsterKind(attacker)) {
+      case 'ghoul':
+        if (saves(victim, 0, this.random)) return []
+        victim.status = 'held'
+        victim.statusByte = 0
+        return [`${target.combatant.label} IS PARALYZED!`]
+      case 'poisoner':
+        if (saves(victim, 0, this.random)) return []
+        victim.status = 'dead'
+        victim.statusByte = 6
+        victim.hpCurrent = 0
+        return [`${target.combatant.label} IS POISONED AND DIES!`]
+      case 'drainer': {
+        const index = victim.levels.findIndex((l) => l > 0)
+        if (index < 0) return []
+        const level = victim.levels[index]!
+        if (level <= 1) { victim.status = 'dead'; victim.statusByte = 6; victim.hpCurrent = 0; return [`${target.combatant.label} IS DRAINED OF LIFE!`] }
+        victim.levels[index] = level - 1
+        const lost = Math.max(1, Math.floor(victim.hpMax / level))
+        victim.hpMax -= lost
+        victim.hpCurrent = Math.min(victim.hpCurrent, victim.hpMax)
+        victim.experience = Math.floor(victim.experience / 2)
+        return [`${target.combatant.label} LOSES A LEVEL!`]
+      }
+      default:
+        return []
+    }
+  }
+
+  /** A round spent stopping an ally's bleeding: dying becomes unconscious. */
+  bandage(f: Fighter, target: Fighter): string[] {
+    const c = target.combatant.member.character
+    if (c.status !== 'dying') return []
+    c.status = 'unconscious'
+    c.statusByte = 4
+    c.hpCurrent = 0
+    f.acted = true
+    f.moves = 0
+    this.actedThisRound = true
+    return [`${f.combatant.label} BANDAGES ${target.combatant.label}.`]
+  }
+
+  /** Allies next to this fighter who are bleeding. */
+  dyingNeighbours(f: Fighter): Fighter[] {
+    return this.fighters.filter((o) => o !== f && o.side === f.side && o.combatant.member.character.status === 'dying'
+      && Math.abs(o.x - f.x) <= 1 && Math.abs(o.y - f.y) <= 1)
   }
 
   /** The animated dead still on their feet. */
@@ -527,6 +625,10 @@ export class Battle {
     }
     return undefined
   }
+}
+
+function fighterLevel(c: Character): number {
+  return Math.max(c.levels[2] ?? 0, c.levels[3] ?? 0, c.levels[4] ?? 0)
 }
 
 export { STEPS as BATTLE_STEPS }

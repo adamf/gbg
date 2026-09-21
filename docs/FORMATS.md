@@ -319,7 +319,30 @@ potions, wands, rings and bracers (coab `CMD_Treasure`). Whether the original al
 rolled a plus for them is not known; here they are built from a shipped record of
 the type and a plain weapon stays plain.
 
-The hall's doorway is a cell walled on all four sides with doors in two of them. A
+The hall's doorway is a cell walled on all four sides with doors in two of them.
+
+### Combat art
+
+`CBODY.DAX` and `CHEAD.DAX` are the party's icons in parts. A body is a 48×48 frame
+(the figure and its readied weapon; 32 of them), a head a 48×20 strip drawn over the
+body's top (14 of them). Each part has four ids: `n` normal, `n + 64` the small size,
+`n + 128` the action pose, `n + 192` small and in action. The art is drawn in template
+colours that the record's six swap pairs at 0xC1 replace. `CPIC?.DAX` are the
+monsters' icons, with the same `+128` action frame. `ICON.DAX` is the party on
+horseback for the wilderness map, two frames.
+
+`COMSPR.DAX` is what flew across the combat screen: block 0 an arrow upright, 1 an
+arrow on the diagonal, 2 an arrow across, 3 a thrown axe, 4 a flask, 5 a dart, 6 a
+lightning bolt, 7 a boulder, 8 a sling stone, 9 sparkles, 10 a burst, 11 a skull; each
+with a second frame at `+128` — for the arrows pointing the other way, for the thrown
+things another turn of the tumble, for the burst the large one.
+
+`SQRPACI.DAX` and `BACPAC.DAX` are 48×48 terrain tiles — grass, hills, mountains,
+rivers, forest — which must be the wilderness map's. The map that indexes them is
+not found yet; the wilderness scripts' overland coordinates run on it.
+
+`.SPC` files (a member's `CHRDATx.SPC`, a monster's `MON?SPC.DAX` block) are nine-byte
+records that look like the lasting effects on a character rather than spells; not read. A
 four-walled cell is solid rock only when it has no door at all. Two more area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
 (hours) and how likely (percent) a resting party is interrupted, and `0x6DE2`/`0x6E6C`
 set before a COMBAT with no monsters loaded mean the temple and the shop.
@@ -401,10 +424,11 @@ where Curse has 100. Offsets checked against every character Pool of Radiance sh
 | 0xA1 | attacks per round, doubled |
 | 0xA9 | base armour class, `60 - AC` |
 | 0xAC | experience, `i32` |
+| 0xBD, 0xBE | combat icon parts: the CHEAD strip and the CBODY frame (the body is the readied weapon's) |
 | 0xB1 | hit points rolled, before the constitution bonus |
 | 0xB8, 0xBA | what a fallen monster is worth: base experience `i16`, plus this much per hit point rolled |
-| 0xC0 | combat icon: a block of ICON.DAX |
-| 0xC1 | six colour swaps for that icon, old nibble high, new nibble low; then icon size |
+| 0xC0 | icon size: 1 small (dwarves, gnomes, halflings), 2 normal |
+| 0xC1 | six colour swaps for the icon, old nibble high, new nibble low |
 | 0x10C | health status |
 | 0x110 | to-hit bonus, raw: 40 is none |
 | 0x111, 0x112 | armour class front and behind, `60 - AC` |

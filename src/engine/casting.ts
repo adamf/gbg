@@ -4,6 +4,7 @@
  * treated alike; the fight-long ones (a blessing, a shield) live on the Combat.
  */
 
+import { takeDamage } from './combat.js'
 import { CLASS_TRACKS, type Character } from '../formats/character.js'
 import { SPELLS, spellById, spellLevelOf, type CasterClass, type Spell } from '../formats/spells.js'
 import type { Combat, Combatant, Random } from './combat.js'
@@ -135,7 +136,7 @@ export function cast(
         for (let m = 0; m < missiles; m++) amount += roll(dice, e.sides ?? 6, e.bonus ?? 0, random)
         if (spell.id === 9 || spell.id === 20) amount = Math.max(amount, level)
         if (spell.target === 'foes' && savesVsSpell(t, random)) amount = Math.floor(amount / 2)
-        hurt(t, amount, combat)
+        hurt(t, amount, combat, /fire|burning|flame/i.test(spell.name))
         lines.push(`${t.name} TAKES ${amount}${t.status === 'dead' || t.status === 'unconscious' ? ` AND IS ${t.status.toUpperCase()}` : ''}.`)
       }
       break
@@ -192,17 +193,9 @@ export function cast(
   return { lines }
 }
 
-function hurt(target: Character, amount: number, combat?: Combat): void {
-  const left = target.hpCurrent - amount
-  if (left > 0) {
-    target.hpCurrent = left
-    return
-  }
-  target.hpCurrent = 0
-  const dead = -left >= 10 || target.race === 0
-  target.status = dead ? 'dead' : 'unconscious'
-  target.statusByte = dead ? 6 : 4
-  combat?.fell(target)
+function hurt(target: Character, amount: number, combat?: Combat, fire = false): void {
+  const result = takeDamage(target, amount, fire)
+  if (result !== 'hurt') combat?.fell(target)
 }
 
 /** Everything about spells a fight needs from a combatant list. */

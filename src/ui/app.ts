@@ -362,6 +362,16 @@ const pageUi: SessionUi = {
           if (battle.over) finish('done')
           else refresh()
         })
+        const bleeding = battle.dyingNeighbours(fighter)
+        button('B', 'BANDAGE', bleeding.length > 0 && !fighter.acted, () => {
+          void (async () => {
+            const at = bleeding.length === 1 ? 0 : await pageUi.menu('WHOM?', bleeding.map((t) => t.combatant.label), 'vertical')
+            const target = bleeding[at]
+            if (!target) return
+            pageUi.print(battle.bandage(fighter, target).join('\n'), true)
+            refresh()
+          })()
+        })
         button('E', 'END TURN', true, () => (openTurn?.finish ?? finish)('done'))
         button('R', 'RUN', true, () => (openTurn?.finish ?? finish)('run'))
         pageUi.print(`${label}'S TURN. ${fighter.moves} MOVE${fighter.moves === 1 ? '' : 'S'} LEFT. CLICK A SQUARE OR USE THE ARROWS AND Q E Z X TO MOVE, F ATTACK, C CAST, E END.`, true)
@@ -627,7 +637,7 @@ window.addEventListener('keydown', (event) => {
       if (battle.move(fighter, step)) refresh()
       return
     }
-    const hotkeys: Record<string, string> = { KeyF: 'ATTACK', KeyX: 'SHOOT', KeyC: 'CAST', KeyU: 'USE', KeyT: 'TURN', KeyE: 'END TURN', KeyR: 'RUN' }
+    const hotkeys: Record<string, string> = { KeyF: 'ATTACK', KeyX: 'SHOOT', KeyC: 'CAST', KeyU: 'USE', KeyT: 'TURN', KeyB: 'BANDAGE', KeyE: 'END TURN', KeyR: 'RUN' }
     if (event.code === 'KeyX' && !event.shiftKey) {
       // X is a diagonal step down-right; shift-X shoots.
       event.preventDefault()

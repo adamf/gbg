@@ -34,7 +34,7 @@ import { ready as readyItem, recompute, unready } from './equipment.js'
 import type { ItemType } from '../formats/items.js'
 import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writer.js'
 import { SAVED_GAME_EXTRA, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH } from '../formats/library.js'
-import { pay } from './treasure.js'
+import { goldOf, pay } from './treasure.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -89,6 +89,7 @@ export interface SessionUi {
 
 const START_HOUR = 8
 const HOURS_PER_REST = 8
+const RAISE_DEAD_COST = 1000
 
 /** Everything a game needs to pick up where it left off. Stays in the browser. */
 export interface Snapshot {
@@ -340,10 +341,29 @@ export class GameSession {
   }
 
   /** One night's rest: a hit point back for each, unless something interrupts. Returns true if it did. */
+  /**
+   * How long the party needs: a day for every hit point the worst-hurt member is
+   * short (the manual: a point a day of uninterrupted rest), or the time to memorise
+   * — a quarter hour a spell level after four hours' relaxation — whichever is more.
+   */
+  private restHours(): number {
+    let hours = 0
+    for (const { character } of this.roster.members) {
+      if (character.status === 'dead' || character.status === 'gone') continue
+      hours = Math.max(hours, 24 * (character.hpMax - Math.max(0, character.hpCurrent)))
+      const levels = character.prepared.reduce((n, id) => n + (spellById(id)?.level ?? 1), 0)
+      if (character.prepared.length > character.memorised.length) hours = Math.max(hours, 4 + Math.ceil(levels / 4))
+    }
+    return Math.max(1, Math.min(hours, 24 * 14))
+  }
+
   private async rest(): Promise<boolean> {
     const period = Math.max(1, this.memory.read(POOL_ADDRESSES.restPeriod) || HOURS_PER_REST)
     const chance = this.memory.read(POOL_ADDRESSES.restChance)
-    for (let hour = 0; hour < HOURS_PER_REST; hour++) {
+    const hours = this.restHours()
+    let slept = 0
+    for (let hour = 0; hour < hours; hour++) {
+      slept++
       this.advanceTime(60)
       if ((hour + 1) % period === 0 && chance > 0 && this.random(99) < chance) {
         this.ui.print('THE PARTY IS DISTURBED!', true)
@@ -351,15 +371,17 @@ export class GameSession {
         return true
       }
     }
+    const days = Math.floor(slept / 24)
     for (const { character } of this.roster.members) {
-      if (character.status === 'unconscious') {
+      if (character.status === 'unconscious' || character.status === 'dying') {
         character.status = 'okay'
         character.statusByte = 0
+        character.hpCurrent = Math.max(0, character.hpCurrent)
       }
-      if (character.status === 'okay' && character.hpCurrent < character.hpMax) character.hpCurrent++
+      if (character.status === 'okay') character.hpCurrent = Math.min(character.hpMax, character.hpCurrent + days)
       refresh(character)
     }
-    this.ui.print('THE PARTY RESTS. SPELLS ARE MEMORISED.', true)
+    this.ui.print(`THE PARTY RESTS ${days > 0 ? `${days} DAY${days === 1 ? '' : 'S'}` : `${slept} HOUR${slept === 1 ? '' : 'S'}`}. SPELLS ARE MEMORISED.`, true)
     this.ui.party(this.roster.members, this.roster.selected)
     return false
   }
@@ -573,7 +595,10 @@ export class GameSession {
   private async spar(): Promise<CombatOutcome> {
     this.sparring = false
     const member = this.roster.members[this.roster.selected]
-    if (!member) return 'won'
+    if (!member || member.character.status !== 'okay') {
+      this.ui.print('THE ARENA MASTER SHAKES HIS HEAD: THAT ONE IS IN NO STATE TO DUEL.', true)
+      return 'won'
+    }
     const twin: Member = {
       character: { ...member.character, levels: [...member.character.levels], money: [0, 0, 0, 0, 0, 0, 0], memorised: [...member.character.memorised], prepared: [...member.character.prepared], attacks: { ...member.character.attacks }, control: 1, hpCurrent: member.character.hpMax, status: 'okay', statusByte: 0 },
       items: member.items.map((item) => ({ ...item })),
@@ -632,6 +657,8 @@ export class GameSession {
         lines = ['THE PARTY CANNOT GET AWAY!']
       }
       lines = combat.next()
+      // Two sides that cannot hurt each other: the party breaks off before the log does.
+      if (combat.round > 300) { outcome = 'fled'; break }
     }
     if (combat.over) {
       this.ui.party(this.roster.members, this.roster.selected)
@@ -647,7 +674,11 @@ export class GameSession {
    * and what they carried — coins and items — lies on the ground for the taking.
    */
   private async reckon(combat: Combat, outcome: CombatOutcome): Promise<CombatOutcome> {
-    if (outcome !== 'fled') outcome = combat.party.some((c) => c.member.character.status === 'okay') ? 'won' : 'lost'
+    if (outcome !== 'fled') {
+      const okay = combat.party.some((c) => c.member.character.status === 'okay')
+      const ran = combat.party.some((c) => c.member.character.status === 'running')
+      outcome = okay ? 'won' : ran ? 'fled' : 'lost'
+    }
     if (outcome === 'won') {
       const experience = combat.experience()
       const standing = this.roster.active
@@ -678,6 +709,10 @@ export class GameSession {
     await this.ui.battleUpdate(battle, [`${monsters.length} FOE${monsters.length === 1 ? '' : 'S'}: ${[...new Set(monsters.map((m) => m.member.character.name))].join(', ')}.`])
 
     while (!battle.over) {
+      if (battle.roundLines.length > 0) {
+        await this.ui.battleUpdate(battle, battle.roundLines.splice(0))
+        this.ui.party(this.roster.members, this.roster.selected)
+      }
       const fighter = battle.current
       if (!fighter) { battle.endTurn(); continue }
       if (fighter.side === 'monster') {
@@ -851,8 +886,23 @@ export class GameSession {
     const shelf = [...this.pool.items]
     this.pool.items = []
     for (;;) {
-      const choice = await this.ui.menu('THE SHOP.', ['BUY', 'SELL', 'LEAVE'], 'horizontal')
-      if (choice === 2) return
+      const choice = await this.ui.menu('THE SHOP.', ['BUY', 'SELL', 'APPRAISE', 'LEAVE'], 'horizontal')
+      if (choice === 3) return
+      if (choice === 2) {
+        // Gems and jewellery are worth nothing until a shop names a price; the
+        // original's prices are not known here, so a gem brings 50 to 500 gold and a
+        // piece of jewellery 100 to 1000.
+        const who = await this.ui.who('WHOSE?', this.roster.members)
+        const member = this.roster.members[who]
+        if (!member) continue
+        const money = member.character.money
+        let gold = 0
+        for (; (money[5] ?? 0) > 0; money[5]!--) gold += 50 * (this.random(9) + 1)
+        for (; (money[6] ?? 0) > 0; money[6]!--) gold += 100 * (this.random(9) + 1)
+        money[3] = (money[3] ?? 0) + gold
+        this.ui.print(gold > 0 ? `THE SHOPKEEPER OFFERS ${gold} GOLD FOR THE LOT, AND ${member.character.name} TAKES IT.` : 'NOTHING TO APPRAISE.', true)
+        continue
+      }
       if (choice === 0) {
         if (shelf.length === 0) {
           this.ui.print('THERE IS NOTHING FOR SALE.', true)
@@ -1074,8 +1124,26 @@ export class GameSession {
     for (;;) {
       const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax || m.character.status !== 'okay')
       const gold = this.roster.members.reduce((n, m) => n + (m.character.money[3] ?? 0), 0)
-      const choice = await this.ui.menu(`THE TEMPLE. YOU HAVE ${gold} GOLD.`, ['HEAL THE PARTY', 'LEAVE'], 'vertical')
-      if (choice !== 0) return
+      const dead = this.roster.members.filter((m) => m.character.status === 'dead')
+      const choice = await this.ui.menu(`THE TEMPLE. YOU HAVE ${gold} GOLD.`, ['HEAL THE PARTY', `RAISE DEAD — ${RAISE_DEAD_COST} GOLD`, 'LEAVE'], 'vertical')
+      if (choice === 2) return
+      if (choice === 1) {
+        // Raise dead: the manual's constitution point comes off, and the raised come
+        // back with a single hit point. The price is this program's, not the original's.
+        if (dead.length === 0) { this.ui.print('NOBODY HERE NEEDS RAISING.', true); continue }
+        const who = dead.length === 1 ? 0 : await this.ui.menu('RAISE WHOM?', dead.map((m) => m.character.name), 'vertical')
+        const member = dead[who]
+        if (!member) continue
+        const payer = this.roster.members.find((m) => goldOf(m) >= RAISE_DEAD_COST)
+        if (!payer || !pay(payer, RAISE_DEAD_COST)) { this.ui.print('YOU CANNOT PAY.', true); continue }
+        member.character.status = 'okay'
+        member.character.statusByte = 0
+        member.character.hpCurrent = 1
+        member.character.stats.con = Math.max(3, member.character.stats.con - 1)
+        this.ui.print(`${member.character.name} LIVES AGAIN, A LITTLE THE WORSE FOR IT.`, true)
+        this.ui.party(this.roster.members, this.roster.selected)
+        continue
+      }
       if (hurt.length === 0) {
         this.ui.print('NOBODY NEEDS HEALING.', true)
         continue

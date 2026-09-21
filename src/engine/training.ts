@@ -51,12 +51,30 @@ export function nextLevelAt(track: Track, level: number): number {
   return THRESHOLDS[track][level] ?? Number.POSITIVE_INFINITY
 }
 
+/**
+ * The manual's race limits: how far each race may go in each class. Humans are
+ * unlimited; a dash in the table is a class the race cannot take at all.
+ */
+const RACE_LIMITS: Record<number, Partial<Record<Track, number>>> = {
+  1: { fighter: 9, thief: 99 }, // dwarf
+  2: { fighter: 7, 'magic-user': 11, thief: 99 }, // elf
+  3: { fighter: 6, thief: 99 }, // gnome
+  4: { cleric: 5, fighter: 8, 'magic-user': 8, thief: 99 }, // half-elf
+  5: { fighter: 6, thief: 99 }, // halfling
+}
+
+export function levelLimit(race: number, track: Track): number {
+  const limits = RACE_LIMITS[race]
+  if (!limits) return 99
+  return limits[track] ?? 0
+}
+
 /** The class tracks this character is ready to advance in, among those the hall teaches. */
 export function readyToTrain(character: Character, mask: number): Track[] {
   const share = shareOfExperience(character)
   return tracksInMask(mask).filter((track) => {
     const level = character.levels[CLASS_TRACKS.indexOf(track)] ?? 0
-    return level > 0 && share >= nextLevelAt(track, level)
+    return level > 0 && share >= nextLevelAt(track, level) && level < levelLimit(character.race, track)
   })
 }
 

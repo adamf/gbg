@@ -1,3 +1,4 @@
+import * as combatModule from '../src/engine/combat.js'
 import { describe, expect, it } from 'vitest'
 
 import { CHARACTER_RECORD_SIZE, readCharacter } from '../src/formats/character.js'
@@ -8,7 +9,7 @@ function fighter(name: string, hp: number, ac: number, thac0: number, dice: [num
   data[0] = name.length
   for (let i = 0; i < name.length; i++) data[1 + i] = name.charCodeAt(i)
   data[0x2d] = 60 - thac0
-  data[0x2e] = name === 'ORC' ? 0 : 7
+  data[0x2e] = name === 'ORC' || name === 'TROLL' ? 0 : 7
   data[0x32] = hp
   data[0x11b] = hp
   data[0x111] = 60 - ac
@@ -88,7 +89,31 @@ describe('a fight', () => {
     const monsters = labelMonsters([{ member: { character: fighter('OGRE', 30, 5, 15, [1, 4, 0]), items: [] }, count: 1 }])
     const combat = new Combat(party, monsters, (max) => (max === 19 ? 18 : Math.min(3, max)))
     while (!combat.over) combat.next()
-    expect(party[0]!.member.character.status).toBe('unconscious')
+    expect(['unconscious', 'dying']).toContain(party[0]!.member.character.status)
     expect(combat.partyStanding.length).toBe(0)
+  })
+})
+
+describe('taking damage', () => {
+  const { takeDamage, monsterKind } = combatModule
+  it('knocks a character out at zero, leaves them dying below it, and kills at minus ten', () => {
+    const hero = fighter('HERO', 5, 2, 20, [1, 8, 0])
+    expect(takeDamage(hero, 3)).toBe('hurt')
+    expect(hero.hpCurrent).toBe(2)
+    expect(takeDamage(hero, 2)).toBe('unconscious')
+    const other = fighter('OTHER', 5, 2, 20, [1, 8, 0])
+    expect(takeDamage(other, 8)).toBe('dying')
+    expect(other.hpCurrent).toBe(-3)
+    expect(takeDamage(fighter('THIRD', 5, 2, 20, [1, 8, 0]), 15)).toBe('dead')
+  })
+
+  it('kills a monster at zero, but only downs a troll unless it was burnt', () => {
+    expect(takeDamage(fighter('ORC', 5, 6, 19, [1, 8, 0]), 5)).toBe('dead')
+    const troll = fighter('TROLL', 20, 4, 15, [1, 8, 0])
+    expect(monsterKind(troll)).toBe('troll')
+    expect(takeDamage(troll, 25)).toBe('unconscious')
+    expect(troll.status).toBe('unconscious')
+    const burnt = fighter('TROLL', 20, 4, 15, [1, 8, 0])
+    expect(takeDamage(burnt, 25, true)).toBe('dead')
   })
 })
