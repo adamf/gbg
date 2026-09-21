@@ -90,6 +90,7 @@ const ui: SessionUi = {
       return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
     }
     if (prompt?.startsWith('THE TEMPLE.')) {
+      if ((menuSeen.get(key) ?? 0) > 4) return find('LEAVE')
       const dead = session.roster.members.some((m) => m.character.status === 'dead')
       const purse = session.roster.members.reduce((n, m) => n + goldOf(m), 0)
       if (dead && purse >= 1000) return find('RAISE')

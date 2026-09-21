@@ -1150,10 +1150,9 @@ export class GameSession {
       }
       let paid = 0
       for (const { character } of hurt) {
-        const need = character.hpMax - character.hpCurrent
-        const payer = this.roster.members.find((m) => (m.character.money[3] ?? 0) >= need)
-        if (!payer) continue
-        payer.character.money[3]! -= need
+        const need = character.hpMax - Math.max(0, character.hpCurrent)
+        const payer = this.roster.members.find((m) => goldOf(m) >= need)
+        if (!payer || !pay(payer, need)) continue
         character.hpCurrent = character.hpMax
         if (character.status !== 'dead') {
           character.status = 'okay'
