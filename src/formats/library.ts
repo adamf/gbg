@@ -396,6 +396,26 @@ export class GameLibrary {
   }
 
   /** The items in one block of an area's ITEM file: a shop's stock, or a hoard. */
+  /** One shipped record per item type, from every ITEM file: what random loot is built from. */
+  async itemTemplates(): Promise<Map<number, Item>> {
+    if (this.templates) return this.templates
+    const templates = new Map<number, Item>()
+    for (const name of this.source.list().filter((n) => /^ITEM\d*\.DAX$/i.test(n)).sort()) {
+      const archive = await this.archive(name)
+      for (const block of archive?.blocks ?? []) {
+        for (const item of readItems(block.data)) {
+          const have = templates.get(item.type)
+          // Prefer a plain record over a magical one, so loot is not all enchanted.
+          if (!have || (have.plus !== 0 && item.plus === 0)) templates.set(item.type, item)
+        }
+      }
+    }
+    this.templates = templates
+    return templates
+  }
+
+  private templates: Map<number, Item> | undefined
+
   async itemBlock(area: number, id: number): Promise<Item[]> {
     const archive = await this.archive(`ITEM${area}.DAX`)
     const block = archive?.blocks.find((b) => b.id === id)

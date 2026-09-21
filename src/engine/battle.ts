@@ -8,6 +8,7 @@
  * this decides who is where and whose turn it is.
  */
 
+import type { Spell } from '../formats/spells.js'
 import type { Character } from '../formats/character.js'
 import type { Direction, GeoMap } from '../formats/geo.js'
 import { buildArena, buildWildArena, type Arena } from './arena.js'
@@ -47,7 +48,24 @@ function able(c: Character): boolean {
   return c.status === 'okay' && c.hpCurrent > 0
 }
 
+/**
+ * What just happened on the grid, for the screen to show before the words: a blow,
+ * a shot, a spell. The engine records them; the view plays them and empties the list.
+ */
+export type EffectShape = 'lunge' | 'arrow' | 'streak' | 'burst' | 'bolt' | 'sparkle' | 'glow'
+export interface BattleEffect {
+  shape: EffectShape
+  from: { x: number; y: number }
+  to: { x: number; y: number }[]
+  /** For blows and shots: whether anything landed. */
+  hit?: boolean
+  /** An EGA palette index for the spell's light. */
+  colour?: number
+}
+
 export class Battle {
+  readonly effects: BattleEffect[] = []
+
   readonly arena: Arena
   readonly width: number
   readonly height: number
@@ -173,12 +191,32 @@ export class Battle {
         }
       }
     }
+    // The nearest floor to a point that the party can reach: a square's middle may
+    // sit on a wall band whose nearest floor is on the far side of it.
+    const nearestReachable = (origin: { x: number; y: number }): { x: number; y: number } | undefined => {
+      const seen = new Set<string>([`${origin.x},${origin.y}`])
+      const queue = [origin]
+      let looked = 0
+      while (queue.length > 0 && looked++ < 400) {
+        const here = queue.shift()!
+        if (region.has(`${here.x},${here.y}`) && this.free(here.x, here.y)) return here
+        for (const step of EIGHT_STEPS) {
+          const x = here.x + step.dx
+          const y = here.y + step.dy
+          if (x < 0 || y < 0 || x >= this.width || y >= this.height || seen.has(`${x},${y}`)) continue
+          seen.add(`${x},${y}`)
+          queue.push({ x, y })
+        }
+      }
+      return undefined
+    }
     // The monsters stand in the square as far ahead as they were seen; nearer if that
     // is rock or walled off. If nothing ahead connects, they come from the far end.
     let monsterOrigin = farthest
-    for (let d = Math.min(WINDOW, distance + 1); d >= 1; d--) {
-      const candidate = middle(ahead.dx * d, ahead.dy * d)
-      if (spots(candidate, 1, region).length > 0) { monsterOrigin = candidate; break }
+    for (let d = Math.min(WINDOW, Math.max(1, distance)); d >= 1; d--) {
+      const p = this.arena.patch(ahead.dx * d, ahead.dy * d)
+      const candidate = nearestReachable({ x: p.x + 3, y: p.y + 3 })
+      if (candidate && Math.abs(candidate.x - (p.x + 3)) + Math.abs(candidate.y - (p.y + 3)) <= 8) { monsterOrigin = candidate; break }
     }
     for (const [i, spot] of spots(monsterOrigin, monsters.length, region).entries()) {
       this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, moves: 0, acted: false })
@@ -225,6 +263,8 @@ export class Battle {
   }
 
   endTurn(): void {
+    // Whatever the screen did not play is stale by now.
+    this.effects.length = 0
     this.turn++
     if (this.turn >= this.order.length && !this.over) this.startRound()
   }
@@ -297,6 +337,8 @@ export class Battle {
   attack(f: Fighter, target: Fighter): string[] {
     const lines: string[] = []
     this.actedThisRound = true
+    const effect: BattleEffect = { shape: this.neighbours(f).includes(target) ? 'lunge' : 'arrow', from: { x: f.x, y: f.y }, to: [{ x: target.x, y: target.y }], hit: false }
+    this.effects.push(effect)
     const attacker = f.combatant.member.character
     const defender = target.combatant.member.character
     const helpless = defender.status === 'asleep' || defender.status === 'held'
@@ -309,6 +351,7 @@ export class Battle {
         continue
       }
       const damage = rollDamage(attacker, this.random) * (helpless ? 2 : 1)
+      effect.hit = true
       const left = defender.hpCurrent - damage
       if (left > 0) {
         defender.hpCurrent = left
@@ -384,6 +427,7 @@ export class Battle {
       const chosen = spell.target === 'foe' ? [target()].filter((t): t is Fighter => t !== undefined) : foes.slice(0, spell.effect.count ?? 99)
       if (chosen.length > 0) {
         forget(me, spell.id)
+        this.recordSpell(spell, f, chosen)
         lines.push(...cast(spell, me, chosen.map((t) => t.combatant.member.character), this.random, this.combat).lines)
         this.actedThisRound = true
         f.acted = true
@@ -424,6 +468,28 @@ export class Battle {
       if (!next || !this.move(f, next)) break
     }
     return lines
+  }
+
+  /** The fighter standing for a character, if they are in this fight. */
+  fighterOf(character: Character): Fighter | undefined {
+    return this.fighters.find((f) => f.combatant.member.character === character)
+  }
+
+  /** Notes a spell for the screen: its shape and colour by what it does. */
+  recordSpell(spell: Spell, caster: Fighter, targets: readonly Fighter[]): void {
+    const kind = spell.effect.kind
+    const name = spell.name.toLowerCase()
+    let shape: EffectShape = 'glow'
+    let colour = 15
+    if (kind === 'damage' || kind === 'harm') {
+      if (name.includes('lightning')) { shape = 'bolt'; colour = 11 }
+      else if (spell.target === 'foes') { shape = 'burst'; colour = name.includes('fire') || name.includes('burning') ? 14 : 13 }
+      else { shape = 'streak'; colour = name.includes('missile') ? 11 : 12 }
+    } else if (kind === 'sleep' || kind === 'hold') { shape = 'sparkle'; colour = 13 }
+    else if (kind === 'heal') { shape = 'sparkle'; colour = 10 }
+    else if (kind === 'curse') { shape = 'glow'; colour = 12 }
+    else if (kind === 'bless' || kind === 'shield') { shape = 'glow'; colour = 14 }
+    this.effects.push({ shape, colour, from: { x: caster.x, y: caster.y }, to: targets.map((t) => ({ x: t.x, y: t.y })) })
   }
 
   /** First step of a shortest path to a square next to the goal, or nothing. */

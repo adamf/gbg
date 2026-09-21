@@ -13,7 +13,7 @@ import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-v
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
 import { BATTLE_STEPS, type Battle, type Fighter } from '../engine/battle.js'
-import { drawBattle, SQUARE, viewport, type BattleArt } from './battle-view.js'
+import { drawBattle, playEffects, SQUARE, viewport, type BattleArt } from './battle-view.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
@@ -299,11 +299,13 @@ const pageUi: SessionUi = {
   },
 
   async battleUpdate(battle, lines) {
+    if (import.meta.env.DEV) (window as unknown as { gbg?: { battle?: unknown } }).gbg!.battle = battle
     notes.textContent = ''
     battlePanel.classList.add('shown')
     battleActions.replaceChildren()
     drawBattle(battleCanvas, battle, battle.current, battleArt)
     showFighter(battle.current)
+    await playEffects(battleCanvas, battle, battle.current, battleArt)
     if (lines.length > 0) {
       pageUi.print(lines.join('\n'), true)
       await wait(Math.min(1200, 250 + lines.length * 250))
@@ -341,7 +343,8 @@ const pageUi: SessionUi = {
         button('F', 'ATTACK', near.length > 0 && !fighter.acted, () => void pick('WHOM?', near))
         button('⇧X', 'SHOOT', far.length > 0 && !fighter.acted, () => void pick('AT WHOM?', far))
         button('C', 'CAST', fighter.combatant.member.character.memorised.length > 0 && !fighter.acted, () => {
-          void cast().then((lines) => {
+          void cast().then(async (lines) => {
+            await playEffects(battleCanvas, battle, fighter, battleArt)
             if (lines.length > 0) pageUi.print(lines.join('\n'), true)
             refresh()
           })
@@ -368,6 +371,7 @@ const pageUi: SessionUi = {
         const target = targets[at]
         if (!target) return
         const lines = battle.attack(fighter, target)
+        await playEffects(battleCanvas, battle, fighter, battleArt)
         pageUi.print(lines.join('\n'), true)
         drawBattle(battleCanvas, battle, fighter, battleArt)
         pageUi.party([], 0)

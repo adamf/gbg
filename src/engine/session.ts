@@ -23,6 +23,7 @@ import { characterLevel, className, raceName, type Character, type Item } from '
 export type { Spell }
 import { Combat, labelMonsters, type Combatant } from './combat.js'
 import { Battle, type Fighter } from './battle.js'
+import { randomItems } from './loot.js'
 import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
@@ -153,6 +154,7 @@ export class GameSession {
   async resume(saved: SavedGame, members?: Member[]): Promise<void> {
     this.restore(saved)
     this.roster.members = members ?? await this.library.party(saved)
+    await this.armRanges()
     for (const { character } of this.roster.members) if (canCast(character) && character.prepared.length === 0) autoPrepare(character)
     this.ui.party(this.roster.members, this.roster.selected)
     const blockId = this.memory.read(POOL_ADDRESSES.lastEclBlock)
@@ -177,6 +179,18 @@ export class GameSession {
       await this.loadScript(blockId)
       await this.runStart()
     })
+  }
+
+  /**
+   * The record's attack has no reach in it: a readied bow, sling or handful of darts
+   * gives the character their range from the type table, so the party can shoot.
+   */
+  private async armRanges(): Promise<void> {
+    const types = await this.types()
+    for (const { character, items } of this.roster.members) {
+      const missile = items.find((item) => item.readied && (types[item.type]?.range ?? 0) > 0)
+      character.attacks.range = missile ? types[missile.type]!.range : undefined
+    }
   }
 
   get busy(): boolean {
@@ -214,6 +228,7 @@ export class GameSession {
     // Copies again, so the snapshot can be loaded more than once.
     this.roster.members = snapshot.members.map((m) => ({ character: structuredClone(m.character), items: structuredClone(m.items) }))
     this.pool = structuredClone(snapshot.pool ?? emptyPool())
+    await this.armRanges()
     this.area = snapshot.area
     this.party = snapshot.party
     this.positionSetByScript = true
@@ -665,7 +680,7 @@ export class GameSession {
         continue
       }
       const result = await this.ui.battleTurn(battle, fighter, async () => {
-        const lines = await this.castInCombat(battle.combat)
+        const lines = await this.castInCombat(battle.combat, battle)
         fighter.acted = true
         fighter.moves = 0
         return lines
@@ -984,11 +999,13 @@ export class GameSession {
   }
 
   /** A round's casting: any caster with something ready may use it before blows fall. */
-  private async castInCombat(combat: Combat): Promise<string[]> {
+  private async castInCombat(combat: Combat, battle?: Battle): Promise<string[]> {
     const random = this.random
-    const casters = combat.party.filter((c) => c.member.character.status === 'okay' && !combat.acted.has(c.member.character) && ready(c.member.character).length > 0)
+    // On the grid it is somebody's turn; in a quick fight anyone with a spell ready may.
+    const current = battle?.current?.combatant
+    const casters = combat.party.filter((c) => (current ? c === current : c.member.character.status === 'okay' && !combat.acted.has(c.member.character)) && ready(c.member.character).length > 0)
     if (casters.length === 0) return ['NOBODY HAS A SPELL READY.']
-    const who = await this.ui.menu('WHO CASTS?', [...casters.map((c) => c.label), 'NOBODY'], 'vertical')
+    const who = casters.length === 1 ? 0 : await this.ui.menu('WHO CASTS?', [...casters.map((c) => c.label), 'NOBODY'], 'vertical')
     const caster = casters[who]
     if (!caster) return []
     const usable = ready(caster.member.character)
@@ -1021,6 +1038,10 @@ export class GameSession {
     }
     forget(caster.member.character, spell.id)
     combat.acted.add(caster.member.character)
+    if (battle) {
+      const from = battle.fighterOf(caster.member.character)
+      if (from) battle.recordSpell(spell, from, targets.map((t) => battle.fighterOf(t)).filter((f): f is Fighter => f !== undefined))
+    }
     const { lines } = cast(spell, caster.member.character, targets, random, combat)
     this.ui.party(this.roster.members, this.roster.selected)
     return lines
@@ -1228,7 +1249,7 @@ export class GameSession {
         if (treasure.items < 0x80) {
           this.pool.items.push(...(await this.library.itemBlock(this.area, treasure.items)))
         } else if (treasure.items !== 0xff) {
-          ui.note(`${treasure.items - 0x80} random items are not generated yet`)
+          this.pool.items.push(...randomItems(treasure.items - 0x80, await this.library.itemTemplates(), this.random))
         }
       },
       damage: (spec) => {

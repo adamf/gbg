@@ -45,8 +45,12 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **Training** — the halls' class masks and PROGRAM 0 open a training menu; a level
   costs the original's thousand gold and brings a hit die, a better to-hit and slots.
 - **Treasure and shops** — what TREASURE leaves on the ground can be shared and taken,
-  shops buy and sell, and items carry the names the game printed, scanned from
-  START.EXE. V shows a character sheet.
+  random loot rolls on the original's table and is built from shipped records of the
+  same type, shops buy and sell, and items carry the names the game printed, scanned
+  from START.EXE. V shows a character sheet.
+- **The fight, seen** — a blow is a lunge, a shot an arrow in flight, a spell its own
+  light: a streak for a missile, a burst for a fireball, a bolt for lightning,
+  sparkles on the charmed and the healed. Lights over the art, never repainting it.
 
 - **Outdoors** — when a script clears the in-dungeon word the map is shown from above
   and a square takes an hour; the wilderness blocks (25 to 27) carry their own

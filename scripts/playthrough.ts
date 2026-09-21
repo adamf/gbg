@@ -41,6 +41,9 @@ let wantRest = false
 
 let trained = 0
 let lastStatus = ''
+let seller = 0
+let sold = 0
+const sellable = () => session.roster.members.some((m) => m.items.some((i) => !i.readied))
 let dueled = false
 let reloads = 0
 
@@ -51,6 +54,7 @@ const ui: SessionUi = {
     if (text.includes('EACH SURVIVOR GAINS')) wins++
     if (text.includes('THE PARTY HAS FALLEN')) losses++
     if (text.includes('IS NOW A LEVEL')) trained++
+    if (text.includes('THE SHOPKEEPER PAYS')) sold++
     if (text.includes('WINS THE BOUT') || text.includes('YIELDS')) dueled = true
     if (process.env.PLAY_TEXTS && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
     else if (process.env.PLAY_DEBUG && lastStatus.startsWith('in the') && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
@@ -77,7 +81,14 @@ const ui: SessionUi = {
     if (find('FIGHT') >= 0 && find('RUN') >= 0) return find('FIGHT')
     if (find('COMBAT') >= 0 && find('WAIT') >= 0) return random(9) < 7 ? find('COMBAT') : find('FLEE')
     if (find('SHARE') >= 0) return find('SHARE')
-    if (find('LEAVE THE REST') >= 0) return find('LEAVE THE REST')
+    if (find('LEAVE THE REST') >= 0) {
+      // Take what can be sold, up to a pack each; the shops turn it into training gold.
+      const carried = session.roster.members.reduce((n, m) => n + m.items.length, 0)
+      const take = labels.findIndex((l) => l.startsWith('TAKE '))
+      return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
+    }
+    if (prompt === 'THE SHOP.') return sellable() ? find('SELL') : find('LEAVE')
+    if (prompt === 'SELL WHAT?') { const at = session.roster.members[seller]?.items.findIndex((i) => !i.readied) ?? -1; return at >= 0 ? at : labels.length - 1 }
     // Leave small menus alone the first few times; after that try the other answers,
     // or a door that puts the party back outside is entered forever.
     if (find('LEAVE') >= 0 && labels.length <= 3 && find('NORTH') < 0 && (menuSeen.get(key) ?? 0) <= 3) return find('LEAVE')
@@ -121,7 +132,11 @@ const ui: SessionUi = {
   },
   battleEnd: () => {},
   party: () => {},
-  who: async (_prompt, members) => random(Math.max(0, members.length - 1)),
+  who: async (prompt, members) => {
+    if (prompt === 'WHO SELLS?') { seller = members.findIndex((m) => m.items.some((i) => !i.readied)); return Math.max(0, seller) }
+    if (prompt === 'WHO TAKES IT?') return members.reduce((best, m, i) => (m.items.length < members[best]!.items.length ? i : best), 0)
+    return random(Math.max(0, members.length - 1))
+  },
   parlay: async () => random(4),
   saved: () => {},
   files: () => {},
@@ -161,12 +176,12 @@ const commands = ['forward', 'forward', 'forward', 'forward', 'turnLeft', 'turnR
  * city's events 10 and 17; inside (script 11, same map) the school doors are the
  * cells whose event bytes are 12, 13, 16 and 17 — the hall script subtracts ten.
  */
-const HALL_DOORS = new Map<string, number[]>([['city', [10, 17]], ['hall', [12, 13, 16, 17]]])
+const HALL_DOORS = new Map<string, number[]>([['city', [10, 17]], ['hall', [12, 13, 16, 17]], ['shop', [19, 21, 22, 23]]])
 /** Which school teaches which class, by the city's event byte on its door. */
 const SCHOOL_OF: Record<string, number> = { cleric: 12, 'magic-user': 13, fighter: 16, thief: 17 }
 const TRAINING_COST = 1000
 
-function wantsTraining(): 'city' | 'hall' | undefined {
+function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
   const name = mapName(library.game.id, session.scriptId)
   const where = name === 'Civilized Area, New Phlan' ? 'city' : session.scriptId === 11 ? 'hall' : undefined
   if (!where) return undefined
@@ -176,8 +191,9 @@ function wantsTraining(): 'city' | 'hall' | undefined {
   if (process.env.PLAY_DEBUG && status !== lastStatus) console.log(`  ${status}`)
   lastStatus = status
   if (ready.length === 0) return undefined
+  // Short of the fee but carrying loot: the city's shops first.
+  if (purse < TRAINING_COST) return where === 'city' && sellable() ? 'shop' : undefined
   // The party pools its gold on whoever is training, the way a player would.
-  if (purse < TRAINING_COST) return undefined
   const payer = ready[0]!
   if (goldOf(payer) < TRAINING_COST) {
     for (const m of session.roster.members) {
@@ -296,7 +312,7 @@ for (let step = 0; step < STEPS; step++) {
   }
 }
 
-console.log(`\n${Date.now() - started}ms, ${menus} menus, ${fights} fights (${wins} won, ${losses} lost), ${deaths} party deaths, ${raises} raised, ${reloads} reloads, ${trained} levels trained`)
+console.log(`\n${Date.now() - started}ms, ${menus} menus, ${fights} fights (${wins} won, ${losses} lost), ${deaths} party deaths, ${raises} raised, ${reloads} reloads, ${sold} items sold, ${trained} levels trained`)
 console.log('areas:', [...areas.entries()].map(([id, n]) => `${mapName(library.game.id, id)} ×${n}`).join(', '))
 console.log('party:', session.roster.members.map((m) => `${m.character.name} L${Math.max(...m.character.levels)} ${m.character.hpCurrent}/${m.character.hpMax} xp${m.character.experience} ${m.character.status}`).join(' | '))
 {

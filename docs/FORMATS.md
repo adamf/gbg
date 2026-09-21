@@ -313,6 +313,12 @@ character with WHO, then `CALL 0x8000` before a COMBAT with no monsters loaded: 
 sparring bout against an even match, not to the death, paid at a hundred experience
 a level (coab `calc_battle_exp`, the duel case).
 
+A TREASURE whose item value is 0x80 or more asks for that many random items, rolled
+on a table that is mostly ordinary arms and armour with a few swords, scrolls,
+potions, wands, rings and bracers (coab `CMD_Treasure`). Whether the original also
+rolled a plus for them is not known; here they are built from a shipped record of
+the type and a plain weapon stays plain.
+
 The hall's doorway is a cell walled on all four sides with doors in two of them. A
 four-walled cell is solid rock only when it has no door at all. Two more area words matter to the loop around the scripts: `0x6DD2`/`0x6DD3` are how often
 (hours) and how likely (percent) a resting party is interrupted, and `0x6DE2`/`0x6E6C`
