@@ -89,7 +89,7 @@ export function buy(member: Member, item: Item): boolean {
 export function sell(member: Member, index: number): number {
   const [item] = member.items.splice(index, 1)
   if (!item) return 0
-  const price = Math.floor(item.value / 2)
+  const price = Math.max(1, Math.floor(item.value / 2))
   member.character.money[3] = (member.character.money[3] ?? 0) + price
   return price
 }
@@ -98,4 +98,15 @@ export function take(pool: Pool, index: number, member: Member): Item | undefine
   const [item] = pool.items.splice(index, 1)
   if (item) member.items.push(item)
   return item
+}
+
+/** Every coin the party has, onto one member: the original's POOL and TAKE in one. */
+export function poolOnto(members: readonly Member[], onto: Member): void {
+  for (const m of members) {
+    if (m === onto) continue
+    for (let kind = 0; kind < 7; kind++) {
+      onto.character.money[kind] = (onto.character.money[kind] ?? 0) + (m.character.money[kind] ?? 0)
+      m.character.money[kind] = 0
+    }
+  }
 }

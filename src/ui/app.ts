@@ -55,6 +55,8 @@ const battleActions = el('battleActions')
 /** The player's turn in a battle, so keys can move the fighter. */
 let openTurn: { battle: Battle; fighter: Fighter; refresh(): void; finish(how: 'done' | 'run'): void } | undefined
 let battleArt: BattleArt | undefined
+/** The original's own abbreviations for the party panel. */
+const STATUS_SHORT: Record<string, string> = { unconscious: 'UNCON', dying: 'DYING', dead: 'DEAD', asleep: 'SLEEP', held: 'HELD', stoned: 'STONE', running: 'FLED', animated: 'ANIM', gone: 'GONE', 'temporarily gone': 'GONE' }
 const battleInfo = el('battleInfo')
 
 /** The side panel the original kept: who is up, their hit points, armour and weapon. */
@@ -192,24 +194,37 @@ const pageUi: SessionUi = {
   },
 
   menu(prompt, items, layout) {
+    // A long list comes a page at a time, as the original's Next and Prev did, so the
+    // number keys always reach every entry and the box never runs off the screen.
+    const PAGE = 8
+    const paged = items.length > PAGE + 2
     return new Promise((resolve) => {
-      clearMenu()
-      textPanel.classList.add('shown')
-      menuPrompt.textContent = prompt ?? ''
-      menuBox.className = layout
-      const choose = (index: number): void => {
+      let start = 0
+      const show = (): void => {
         clearMenu()
-        resolve(index)
+        textPanel.classList.add('shown')
+        menuPrompt.textContent = prompt ?? ''
+        menuBox.className = layout
+        const slice = paged ? items.slice(start, start + PAGE) : items
+        const labels = paged ? [...slice, 'NEXT PAGE', 'PREV PAGE'] : [...slice]
+        const choose = (index: number): void => {
+          if (paged && index === slice.length) { start = start + PAGE < items.length ? start + PAGE : 0; show(); return }
+          if (paged && index === slice.length + 1) { start = start - PAGE >= 0 ? start - PAGE : Math.floor((items.length - 1) / PAGE) * PAGE; show(); return }
+          clearMenu()
+          resolve(start + index)
+        }
+        labels.forEach((item, index) => {
+          const button = document.createElement('button')
+          const key = document.createElement('kbd')
+          key.textContent = labels.length === 1 ? '⏎' : index === slice.length && paged ? 'N' : index === slice.length + 1 && paged ? 'P' : String(index + 1)
+          button.append(key, item)
+          button.addEventListener('click', () => choose(index))
+          menuBox.append(button)
+        })
+        if (paged) menuPrompt.textContent = `${prompt ?? ''} (${start / PAGE + 1}/${Math.ceil(items.length / PAGE)})`
+        openMenu = { items: labels, choose }
       }
-      items.forEach((item, index) => {
-        const button = document.createElement('button')
-        const key = document.createElement('kbd')
-        key.textContent = items.length === 1 ? '⏎' : String(index + 1)
-        button.append(key, item)
-        button.addEventListener('click', () => choose(index))
-        menuBox.append(button)
-      })
-      openMenu = { items, choose }
+      show()
     })
   },
 
@@ -442,7 +457,7 @@ const pageUi: SessionUi = {
       const cells: [string, string][] = [
         ['n', c.name],
         ['r', `${className(c).split('/').map((part) => part.slice(0, 2).toUpperCase()).join('/')} ${characterLevel(c)}`],
-        ['r hp', c.status === 'okay' ? `${c.hpCurrent}/${c.hpMax}` : c.status.toUpperCase()],
+        ['r hp', c.status === 'okay' ? `${c.hpCurrent}/${c.hpMax}` : STATUS_SHORT[c.status] ?? c.status.slice(0, 4).toUpperCase()],
         ['r', c.memorised.length > 0 ? `${c.memorised.length}✦ AC ${c.ac}` : `AC ${c.ac}`],
       ]
       for (const [cls, text] of cells) {
@@ -621,6 +636,11 @@ const KEY_COMMANDS: Record<string, MoveCommand> = {
 }
 
 window.addEventListener('keydown', (event) => {
+  if (openMenu && (event.code === 'KeyN' || event.code === 'KeyP') && openMenu.items.includes('NEXT PAGE')) {
+    openMenu.choose(openMenu.items.indexOf(event.code === 'KeyN' ? 'NEXT PAGE' : 'PREV PAGE'))
+    event.preventDefault()
+    return
+  }
   if (playScreen.style.display !== 'block') return
 
   if (openTurn && !openMenu) {

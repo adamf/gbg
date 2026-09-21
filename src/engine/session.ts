@@ -34,7 +34,7 @@ import { ready as readyItem, recompute, unready } from './equipment.js'
 import type { ItemType } from '../formats/items.js'
 import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writer.js'
 import { SAVED_GAME_EXTRA, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH } from '../formats/library.js'
-import { goldOf, pay } from './treasure.js'
+import { goldOf, pay, poolOnto } from './treasure.js'
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -302,8 +302,14 @@ export class GameSession {
       const flat = candidates.flatMap((c) => c.tracks.map((track) => ({ member: c.member, track })))
       const { member, track } = flat[choice]!
       if (!pay(member, TRAINING_COST)) {
-        this.ui.print(`${member.character.name} CANNOT PAY.`, true)
-        continue
+        // The fee is the trainee's, but the party may pool for them here rather than
+        // walk back to camp to do it.
+        const purse = this.roster.members.reduce((n, m) => n + goldOf(m), 0)
+        if (purse < TRAINING_COST) { this.ui.print(`${member.character.name} CANNOT PAY.`, true); continue }
+        const pool = await this.ui.menu(`${member.character.name} CANNOT PAY ALONE. POOL THE PARTY'S COINS?`, ['YES', 'NO'], 'horizontal')
+        if (pool !== 0) continue
+        poolOnto(this.roster.members, member)
+        if (!pay(member, TRAINING_COST)) { this.ui.print(`${member.character.name} CANNOT PAY.`, true); continue }
       }
       const gained = train(member.character, track, random)
       this.ui.print(`${member.character.name} IS NOW A LEVEL ${gained.level} ${track.toUpperCase()}, AND GAINS ${gained.hitPoints} HIT POINTS.`, true)
@@ -318,8 +324,15 @@ export class GameSession {
         const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax && m.character.status !== 'dead')
         const unready = this.roster.members.filter((m) => m.character.prepared.length > m.character.memorised.length)
         const state = hurt.length > 0 ? `${hurt.length} NEED REST.` : unready.length > 0 ? 'SPELLS TO MEMORISE.' : 'EVERYONE IS WELL.'
+        this.ui.showParty(this.party)
         const choice = await this.ui.menu(`CAMP. ${state}`,
-          ['REST', 'MEMORISE', 'CAST', 'USE', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
+          ['REST', 'MEMORISE', 'CAST', 'USE', 'POOL COINS', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
+        if (choice === 4) {
+          const who = await this.ui.who('POOL ON WHOM?', this.roster.members)
+          const onto = this.roster.members[who]
+          if (onto) { poolOnto(this.roster.members, onto); this.ui.print(`${onto.character.name} HOLDS THE PARTY'S COINS.`, true); this.ui.party(this.roster.members, this.roster.selected) }
+          continue
+        }
         if (choice === 0) {
           if (await this.rest()) return
         } else if (choice === 1) {
@@ -328,9 +341,9 @@ export class GameSession {
           await this.castOutside()
         } else if (choice === 3) {
           await this.useOutside()
-        } else if (choice === 4) {
-          this.ui.saved()
         } else if (choice === 5) {
+          this.ui.saved()
+        } else if (choice === 6) {
           this.ui.files(await this.dosSave('B'))
           this.ui.print('SAVGAMB.DAT AND THE CHRDATB FILES ARE READY. PUT THEM IN THE GAME FOLDER AND LOAD GAME B.', true)
         } else {
@@ -908,7 +921,7 @@ export class GameSession {
           this.ui.print('THERE IS NOTHING FOR SALE.', true)
           continue
         }
-        const pick = await this.ui.menu('FOR SALE:', [...shelf.map((item) => `${itemDisplayName(item, names)} — ${item.value} GOLD`), 'NOTHING'], 'vertical')
+        const pick = await this.ui.menu('FOR SALE:', [...shelf.map((item) => `${itemDisplayName(item, names)} — ${Math.max(1, item.value)} GOLD`), 'NOTHING'], 'vertical')
         const item = shelf[pick]
         if (!item) continue
         const who = await this.ui.who('WHO BUYS IT?', this.roster.members)
@@ -919,8 +932,9 @@ export class GameSession {
         const who = await this.ui.who('WHO SELLS?', this.roster.members)
         const member = this.roster.members[who]
         if (!member || member.items.length === 0) continue
-        const pick = await this.ui.menu('SELL WHAT?', [...member.items.map((item) => `${itemDisplayName(item, names)} — ${Math.floor(item.value / 2)} GOLD`), 'NOTHING'], 'vertical')
+        const pick = await this.ui.menu('SELL WHAT?', [...member.items.map((item) => `${itemDisplayName(item, names)} — ${Math.max(1, Math.floor(item.value / 2))} GOLD`), 'NOTHING'], 'vertical')
         if (pick >= member.items.length) continue
+        if (member.items[pick]?.readied) unready(member.character, member.items, pick, await this.types())
         const price = sell(member, pick)
         this.ui.print(`THE SHOPKEEPER PAYS ${price} GOLD.`, true)
       }
