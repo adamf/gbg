@@ -33,15 +33,16 @@ describe('the battle map', () => {
     const party = [{ member: { character: fighter('HERO', 20), items: [] }, label: 'HERO' }]
     const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0), items: [] }, count: 2 }])
     const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 0)
-    const centre = screenOf(3, 3)
+    const centre = screenOf(2, 2)
     expect(battle.tile(centre.x, centre.y)).toBe('floor')
-    expect(battle.tile(centre.x - 1, centre.y)).toBe('wall-along') // the corridor's west wall
-    expect(battle.tile(screenOf(3, 2).x, centre.y)).toBe('rock')
+    expect(battle.tile(centre.x - 1, centre.y)).toBe('rock') // the corridor's west wall, plain side
+    expect(battle.tile(centre.x + 1, centre.y)).toBe('wall-along') // its east wall carries the band
+    expect(battle.tile(screenOf(2, 1).x, centre.y)).toBe('rock')
     expect(battle.blocked(centre.x, centre.y, -1, 0)).toBe(true)
     // The shear: straight up on screen drifts east in the dungeon, into the corridor's wall.
     expect(battle.blocked(centre.x, centre.y, 0, -1)).toBe(true)
     expect(battle.blocked(centre.x, centre.y, -1, -1)).toBe(false)
-    const above = screenOf(2, 3, 1, 2)
+    const above = screenOf(1, 2, 1, 2)
     expect(battle.tile(above.x, above.y)).toBe('floor') // the corridor continues north
     const hero = battle.fighters.find((f) => f.side === 'party')!
     expect([hero.x, hero.y]).toEqual([centre.x, centre.y])

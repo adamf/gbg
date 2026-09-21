@@ -18,9 +18,14 @@ import { isSolid } from './dungeon.js'
 import { cast, forget, ready } from './casting.js'
 
 export const CELL_SPAN = 3
-const WINDOW = 3
+const WINDOW = 2
 const CELLS = WINDOW * 2 + 1
 
+/**
+ * What stands on a square. Walls are two tiles thick, each cell owning one: the
+ * south row and east column of a cell carry the pale-edged pieces, the north row and
+ * west column are plain cobble like rock.
+ */
 export type Tile = 'floor' | 'rock' | 'wall-across' | 'wall-along'
 
 export interface Fighter {
@@ -97,14 +102,10 @@ export class Battle {
             const { x, y } = screenOf(r, c, i, j)
             let tile: Tile = rock ? 'rock' : 'floor'
             if (!rock) {
-              // A wall is one tile thick: a cell owns its south and east walls, and
-              // its north and west ones only where the far side is rock.
-              const north = cellAt(map, row - 1, col)
-              const west = cellAt(map, row, col - 1)
-              const northRock = !north || isSolid(north)
-              const westRock = !west || isSolid(west)
-              if ((j === 0 && northRock && !canWalk(map, row, col, 'north')) || (j === CELL_SPAN - 1 && !canWalk(map, row, col, 'south'))) tile = 'wall-across'
-              else if ((i === 0 && westRock && !canWalk(map, row, col, 'west')) || (i === CELL_SPAN - 1 && !canWalk(map, row, col, 'east'))) tile = 'wall-along'
+              if (j === 0 && !canWalk(map, row, col, 'north')) tile = 'rock'
+              else if (j === CELL_SPAN - 1 && !canWalk(map, row, col, 'south')) tile = 'wall-across'
+              else if (i === 0 && !canWalk(map, row, col, 'west')) tile = 'rock'
+              else if (i === CELL_SPAN - 1 && !canWalk(map, row, col, 'east')) tile = 'wall-along'
             }
             this.tiles.set(`${x},${y}`, tile)
           }
@@ -138,16 +139,22 @@ export class Battle {
   private place(party: Combatant[], monsters: Combatant[], at: { facing: Direction }, distance: number): void {
     const ahead = STEPS[at.facing]
     const spots = (origin: { x: number; y: number }, count: number): { x: number; y: number }[] => {
-      // Ring outward from the origin until everyone has a square.
+      // Spread out from the origin through the floor, never across a wall, so the
+      // party stands together in its own room.
       const found: { x: number; y: number }[] = []
-      for (let radius = 0; radius < this.width && found.length < count; radius++) {
-        for (let dy = -radius; dy <= radius && found.length < count; dy++) {
-          for (let dx = -radius; dx <= radius && found.length < count; dx++) {
-            if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
-            const x = origin.x + dx
-            const y = origin.y + dy
-            if (this.free(x, y) && !found.some((s) => s.x === x && s.y === y)) found.push({ x, y })
-          }
+      const seen = new Set<string>()
+      const queue = [origin]
+      seen.add(`${origin.x},${origin.y}`)
+      while (queue.length > 0 && found.length < count) {
+        const here = queue.shift()!
+        if (this.free(here.x, here.y)) found.push(here)
+        for (const step of EIGHT_STEPS) {
+          const x = here.x + step.dx
+          const y = here.y + step.dy
+          const key = `${x},${y}`
+          if (seen.has(key) || this.isSolid(x, y)) continue
+          seen.add(key)
+          queue.push({ x, y })
         }
       }
       return found

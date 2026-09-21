@@ -61,7 +61,12 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
   g.fillRect(0, 0, canvas.width, canvas.height)
 
   const view = viewport(battle, active)
-  const cobble = !outdoors && art?.tiles[1] ? toCanvas(art.tiles[1]) : undefined
+  // The set's pieces: plain cobble, cobble with the pale line along its top, and the
+  // diagonal band that chains into one continuous slanted wall.
+  const FILL = 1
+  const TOP = 5
+  const SLANT = 6
+  const piece = (index: number): HTMLCanvasElement | undefined => (art?.tiles[index] ? toCanvas(art.tiles[index]!) : undefined)
 
   for (let vy = 0; vy < VIEW_ROWS; vy++) {
     for (let vx = 0; vx < VIEW_COLS; vx++) {
@@ -77,20 +82,13 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
         if (tree) g.drawImage(toCanvas(tree), px, py, SQUARE, SQUARE)
         continue
       }
-      if (cobble) g.drawImage(cobble, px, py, SQUARE, SQUARE)
+      // Which piece: the top face where floor lies above, the band along a slanted
+      // wall, plain cobble everywhere else in the mass.
+      const above = battle.tile(x, y - 1) === 'floor'
+      const index = above ? TOP : tile === 'wall-along' ? SLANT : FILL
+      const image = piece(index) ?? piece(FILL)
+      if (image) g.drawImage(image, px, py, SQUARE, SQUARE)
       else { g.fillStyle = '#8a8a8a'; g.fillRect(px, py, SQUARE, SQUARE) }
-      // The pale stone the original painted along a wall's top edge.
-      g.strokeStyle = '#d8d8d8'
-      g.lineWidth = Math.max(3, SQUARE / 8)
-      g.beginPath()
-      if (tile === 'wall-across') {
-        g.moveTo(px, py + g.lineWidth / 2)
-        g.lineTo(px + SQUARE, py + g.lineWidth / 2)
-      } else if (tile === 'wall-along') {
-        g.moveTo(px, py)
-        g.lineTo(px + SQUARE, py + SQUARE)
-      }
-      g.stroke()
     }
   }
 
