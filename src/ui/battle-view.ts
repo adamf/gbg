@@ -61,33 +61,28 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
   g.fillRect(0, 0, canvas.width, canvas.height)
 
   const view = viewport(battle, active)
-  // The set's pieces: plain cobble, cobble with the pale line along its top, and the
-  // diagonal band that chains into one continuous slanted wall.
-  const FILL = 1
-  const TOP = 5
-  const SLANT = 6
-  const piece = (index: number): HTMLCanvasElement | undefined => (art?.tiles[index] ? toCanvas(art.tiles[index]!) : undefined)
 
+  // The arena names a DUNGCOM piece for every square; the art does the rest.
   for (let vy = 0; vy < VIEW_ROWS; vy++) {
     for (let vx = 0; vx < VIEW_COLS; vx++) {
       const x = view.x + vx
       const y = view.y + vy
-      const tile = battle.tile(x, y)
-      if (tile === 'floor') continue
+      const index = battle.tileIndex(x, y)
       const px = vx * SQUARE
       const py = vy * SQUARE
+      if (index < 0) {
+        g.fillStyle = '#3a3a3a'
+        g.fillRect(px, py, SQUARE, SQUARE)
+        continue
+      }
+      if (battle.tile(x, y) === 'floor') continue
       if (outdoors) {
-        if (tile === 'rock') continue
         const tree = art && scenery(art.tiles, x, y)
         if (tree) g.drawImage(toCanvas(tree), px, py, SQUARE, SQUARE)
         continue
       }
-      // Which piece: the top face where floor lies above, the band along a slanted
-      // wall, plain cobble everywhere else in the mass.
-      const above = battle.tile(x, y - 1) === 'floor'
-      const index = above ? TOP : tile === 'wall-along' ? SLANT : FILL
-      const image = piece(index) ?? piece(FILL)
-      if (image) g.drawImage(image, px, py, SQUARE, SQUARE)
+      const image = art?.tiles[index]
+      if (image) g.drawImage(toCanvas(image), px, py, SQUARE, SQUARE)
       else { g.fillStyle = '#8a8a8a'; g.fillRect(px, py, SQUARE, SQUARE) }
     }
   }

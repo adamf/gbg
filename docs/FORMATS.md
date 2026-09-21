@@ -316,6 +316,19 @@ so in the page's notes. Combat is resolved a round at a time without the grid.
 
 ---
 
+## The combat map — `src/engine/arena.ts`
+
+Before a fight the original built a 50×25 grid of DUNGCOM tile indexes from the
+thirteen-by-five dungeon squares around the party (`sub_378CD0`; `SetupDungeonFloor`
+in the coab disassembly, which this is a port of). A square is a patch six wide and
+five tall at `(dx·6 + dy·5 + 21, dy·5 + 10)`, so each dungeon row sits five columns
+right of the one above and north–south walls run as diagonals. Rows 2–4 are floor
+(piece 22); a west wall is a three-wide diagonal band of pieces 4, 3, 13 across them;
+a north wall is pieces 5 over 10 in columns 3–4 of rows 0–1; the two-by-two corners
+at columns 1–2 and 5–6 are chosen from the walls of the squares above and beside.
+A side reads as 0 open, 1 wall, 3 door, OR'd across the boundary. Only piece 22 can be
+stood on.
+
 ## Saved games — `src/formats/library.ts`
 
 `SAVGAM?.DAT`, one letter per slot. Pool of Radiance ships `A` and `J`: the starting

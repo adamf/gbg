@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { CHARACTER_RECORD_SIZE, readCharacter } from '../src/formats/character.js'
 import { readGeoMap } from '../src/formats/geo.js'
 import { buildGeoBlock } from './fixtures.js'
-import { Battle, BATTLE_STEPS, screenOf } from '../src/engine/battle.js'
+import { Battle, BATTLE_STEPS, EIGHT_STEPS } from '../src/engine/battle.js'
+import { buildArena, FLOOR } from '../src/engine/arena.js'
 import { labelMonsters } from '../src/engine/combat.js'
 
 function fighter(name: string, hp: number, race = 7, movement = 12) {
@@ -28,50 +29,57 @@ function corridor() {
   return readGeoMap(1, buildGeoBlock((row, col) => (col === 8 && row >= 2 && row <= 12 ? { n: 0, e: 1, s: 0, w: 1 } : { n: 1, e: 1, s: 1, w: 1 })))
 }
 
-describe('the battle map', () => {
-  it('keeps the corridor walls and fills the rock around it', () => {
+describe('the arena', () => {
+  it('lays the corridor out as the original did: floor rows, a diagonal west band, a two-row north wall', () => {
+    const arena = buildArena(corridor(), { row: 8, col: 8 })
+    const p = arena.patch(0, 0)
+    // The floor rows of the party's square, with the west wall's band across them.
+    expect(arena.tile(p.x + 0, p.y + 2)).toBe(FLOOR)
+    expect([arena.tile(p.x + 1, p.y + 2), arena.tile(p.x + 2, p.y + 2), arena.tile(p.x + 3, p.y + 2)]).toEqual([4, 3, 13])
+    expect([arena.tile(p.x + 2, p.y + 3), arena.tile(p.x + 3, p.y + 3), arena.tile(p.x + 4, p.y + 3)]).toEqual([4, 3, 13])
+    // No north wall in a corridor: those rows are floor.
+    expect(arena.tile(p.x + 3, p.y + 0)).toBe(FLOOR)
+    // The rock square to the east has a north wall two rows tall.
+    const east = arena.patch(1, 0)
+    expect(arena.tile(east.x + 3, east.y + 0)).toBe(5)
+    expect(arena.tile(east.x + 3, east.y + 1)).toBe(10)
+    expect(arena.walkable(p.x + 5, p.y + 2)).toBe(true)
+    expect(arena.walkable(p.x + 3, p.y + 3)).toBe(false)
+  })
+})
+
+describe('a fight on the arena', () => {
+  it('stands everyone on floor and keeps them off the walls', () => {
     const party = [{ member: { character: fighter('HERO', 20), items: [] }, label: 'HERO' }]
     const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0), items: [] }, count: 2 }])
     const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 0)
-    const centre = screenOf(2, 2)
-    expect(battle.tile(centre.x, centre.y)).toBe('floor')
-    expect(battle.tile(centre.x - 1, centre.y)).toBe('rock') // the corridor's west wall, plain side
-    expect(battle.tile(centre.x + 1, centre.y)).toBe('wall-along') // its east wall carries the band
-    expect(battle.tile(screenOf(2, 1).x, centre.y)).toBe('rock')
-    expect(battle.blocked(centre.x, centre.y, -1, 0)).toBe(true)
-    // The shear: straight up on screen drifts east in the dungeon, into the corridor's wall.
-    expect(battle.blocked(centre.x, centre.y, 0, -1)).toBe(true)
-    expect(battle.blocked(centre.x, centre.y, -1, -1)).toBe(false)
-    const above = screenOf(1, 2, 1, 2)
-    expect(battle.tile(above.x, above.y)).toBe('floor') // the corridor continues north
+    for (const f of battle.fighters) expect(battle.tile(f.x, f.y)).toBe('floor')
     const hero = battle.fighters.find((f) => f.side === 'party')!
-    expect([hero.x, hero.y]).toEqual([centre.x, centre.y])
-    const orcs = battle.fighters.filter((f) => f.side === 'monster')
-    expect(orcs.every((o) => o.y < hero.y)).toBe(true)
+    const blockedSteps = EIGHT_STEPS.filter((s) => !battle.canMove(hero, s))
+    expect(blockedSteps.length).toBeGreaterThan(0)
+    expect(battle.fighters.filter((f) => f.side === 'monster').every((o) => o.y < hero.y)).toBe(true)
   })
 
   it('moves with the points it has, strikes neighbours, and marches monsters in', () => {
     const party = [{ member: { character: fighter('HERO', 20, 7, 12), items: [] }, label: 'HERO' }]
     const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0, 6), items: [] }, count: 1 }])
-    // Every roll top: the hero always wins initiative and always hits.
     const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, (max) => max)
     const hero = battle.fighters.find((f) => f.side === 'party')!
     const orc = battle.fighters.find((f) => f.side === 'monster')!
     expect(battle.current).toBe(hero)
     expect(hero.moves).toBe(6)
-    expect(battle.move(hero, BATTLE_STEPS.west)).toBe(false) // corridor wall
-    expect(battle.move(hero, { dx: -1, dy: -1 })).toBe(true) // north along the sheared corridor
-    expect(battle.move(hero, { dx: -1, dy: -1 })).toBe(true)
+    const open = EIGHT_STEPS.find((s) => battle.canMove(hero, s))!
+    expect(battle.move(hero, open)).toBe(true)
+    expect(hero.moves).toBe(5)
     expect(battle.reachable(hero).size).toBeGreaterThan(0)
-    expect(battle.neighbours(hero)).toEqual([])
     battle.endTurn()
     expect(battle.current).toBe(orc)
-    const lines = battle.monsterTurn(orc)
-    expect(Math.abs(orc.y - hero.y) <= 1 && Math.abs(orc.x - hero.x) <= 1).toBe(true)
-    expect(lines[0]).toMatch(/^ORC (HITS|MISSES) HERO/)
-    battle.endTurn()
-    expect(battle.round).toBe(2)
-    expect(battle.current).toBe(hero)
+    for (let i = 0; i < 6 && battle.neighbours(orc).length === 0; i++) {
+      battle.monsterTurn(orc)
+      battle.endTurn()
+      if (battle.current === hero) battle.endTurn()
+    }
+    expect(battle.neighbours(hero)).toContain(orc)
     const blow = battle.attack(hero, orc)
     expect(blow[0]).toMatch(/^HERO HITS ORC FOR 12\. ORC IS DEAD!$/)
     expect(battle.over).toBe(true)
@@ -83,7 +91,7 @@ describe('monsters that shoot and cast', () => {
     const { autoPrepare } = await import('../src/engine/casting.js')
     const party = [{ member: { character: fighter('HERO', 20, 7, 12), items: [] }, label: 'HERO' }]
     const archer = fighter('ARCHER', 6, 0, 6)
-    archer.attacks.range = 12
+    archer.attacks.range = 20
     const shaman = fighter('SHAMAN', 6, 0, 6)
     shaman.levels[5] = 1
     shaman.spellbook = [15]
@@ -93,7 +101,7 @@ describe('monsters that shoot and cast', () => {
       { member: { character: archer, items: [] }, count: 1 },
       { member: { character: shaman, items: [] }, count: 1 },
     ])
-    const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 2, (max) => max)
+    const battle = new Battle(corridor(), party, monsters, { row: 8, col: 8, facing: 'north' }, 1, (max) => max)
     const hero = battle.fighters.find((f) => f.side === 'party')!
     const a = battle.fighters.find((f) => f.combatant.label === 'ARCHER')!
     const s = battle.fighters.find((f) => f.combatant.label === 'SHAMAN')!
@@ -106,5 +114,6 @@ describe('monsters that shoot and cast', () => {
     expect([s.x, s.y]).toEqual([before.sx, before.sy])
     expect(hero.combatant.member.character.hpCurrent).toBeLessThan(20)
     expect(s.combatant.member.character.memorised).toEqual([])
+    void BATTLE_STEPS
   })
 })

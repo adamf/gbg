@@ -3,30 +3,20 @@
  * initiative order with movement points, blows against neighbours, missiles down
  * the lines, and monsters that close in.
  *
- * The arena is laid out the way the original's combat screen was. Every dungeon
- * square becomes a 3×3 patch; a wall on a side turns that side's three squares into
- * wall tiles nobody stands on. The whole thing is sheared one square right per row,
- * so a north–south wall runs as one continuous diagonal and an east–west wall as a
- * straight row. The rules of a blow are `combat.ts`'s; this decides who is where and
- * whose turn it is.
+ * The arena is the original's, built by `arena.ts` from the dungeon around the
+ * party; only its floor tile can be stood on. The rules of a blow are `combat.ts`'s;
+ * this decides who is where and whose turn it is.
  */
 
 import type { Character } from '../formats/character.js'
-import { canWalk, cellAt, type Direction, type GeoMap } from '../formats/geo.js'
+import type { Direction, GeoMap } from '../formats/geo.js'
+import { buildArena, type Arena } from './arena.js'
 import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
-import { isSolid } from './dungeon.js'
 import { cast, forget, ready } from './casting.js'
 
-export const CELL_SPAN = 3
 const WINDOW = 2
-const CELLS = WINDOW * 2 + 1
 
-/**
- * What stands on a square. Walls are two tiles thick, each cell owning one: the
- * south row and east column of a cell carry the pale-edged pieces, the north row and
- * west column are plain cobble like rock.
- */
-export type Tile = 'floor' | 'rock' | 'wall-across' | 'wall-along'
+export type Tile = 'floor' | 'rock'
 
 export interface Fighter {
   combatant: Combatant
@@ -56,16 +46,10 @@ function able(c: Character): boolean {
   return c.status === 'okay' && c.hpCurrent > 0
 }
 
-/** Battle square of a dungeon cell's sub-square (i, j) in the window, shear included. */
-export function screenOf(r: number, c: number, i = 1, j = 1): { x: number; y: number } {
-  const y = r * CELL_SPAN + j
-  return { x: c * CELL_SPAN + i + y, y }
-}
-
 export class Battle {
-  readonly width = CELLS * CELL_SPAN * 2
-  readonly height = CELLS * CELL_SPAN
-  private readonly tiles = new Map<string, Tile>()
+  readonly arena: Arena
+  readonly width: number
+  readonly height: number
   readonly fighters: Fighter[] = []
   readonly combat: Combat
   round = 0
@@ -81,46 +65,27 @@ export class Battle {
     private readonly random: Random,
   ) {
     this.combat = new Combat(party, monsters, random)
-    this.build(map, at)
+    this.arena = buildArena(map, at)
+    this.width = this.arena.width
+    this.height = this.arena.height
     this.place(party, monsters, at, distance)
     this.startRound()
   }
 
   // ---- the map --------------------------------------------------------------
 
-  private build(map: GeoMap, at: { row: number; col: number }): void {
-    const originRow = at.row - WINDOW
-    const originCol = at.col - WINDOW
-    for (let r = 0; r < CELLS; r++) {
-      for (let c = 0; c < CELLS; c++) {
-        const row = originRow + r
-        const col = originCol + c
-        const cell = cellAt(map, row, col)
-        const rock = !cell || isSolid(cell)
-        for (let j = 0; j < CELL_SPAN; j++) {
-          for (let i = 0; i < CELL_SPAN; i++) {
-            const { x, y } = screenOf(r, c, i, j)
-            let tile: Tile = rock ? 'rock' : 'floor'
-            if (!rock) {
-              if (j === 0 && !canWalk(map, row, col, 'north')) tile = 'rock'
-              else if (j === CELL_SPAN - 1 && !canWalk(map, row, col, 'south')) tile = 'wall-across'
-              else if (i === 0 && !canWalk(map, row, col, 'west')) tile = 'rock'
-              else if (i === CELL_SPAN - 1 && !canWalk(map, row, col, 'east')) tile = 'wall-along'
-            }
-            this.tiles.set(`${x},${y}`, tile)
-          }
-        }
-      }
-    }
+  /** What is at a square: the floor, or something nobody stands on. */
+  tile(x: number, y: number): Tile {
+    return this.arena.walkable(x, y) ? 'floor' : 'rock'
   }
 
-  /** What is at a square; beyond the window it is rock. */
-  tile(x: number, y: number): Tile {
-    return this.tiles.get(`${x},${y}`) ?? 'rock'
+  /** The DUNGCOM piece at a square, or -1 for nothing. */
+  tileIndex(x: number, y: number): number {
+    return this.arena.tile(x, y)
   }
 
   isSolid(x: number, y: number): boolean {
-    return this.tile(x, y) !== 'floor'
+    return !this.arena.walkable(x, y)
   }
 
   blocked(x: number, y: number, dx: number, dy: number): boolean {
@@ -159,16 +124,20 @@ export class Battle {
       }
       return found
     }
+    const middle = (pdx: number, pdy: number): { x: number; y: number } => {
+      const p = this.arena.patch(pdx, pdy)
+      return { x: p.x + 3, y: p.y + 3 }
+    }
 
-    const partyOrigin = screenOf(WINDOW, WINDOW)
+    const partyOrigin = middle(0, 0)
     for (const [i, spot] of spots(partyOrigin, party.length).entries()) {
       this.fighters.push({ combatant: party[i]!, side: 'party', ...spot, moves: 0, acted: false })
     }
-    // The monsters stand in the cell as far ahead as they were seen; nearer if that is rock.
+    // The monsters stand in the square as far ahead as they were seen; nearer if that is rock.
     let monsterOrigin = partyOrigin
-    for (let d = distance + 1; d >= 1; d--) {
-      const candidate = screenOf(WINDOW + ahead.dy * d, WINDOW + ahead.dx * d)
-      if (!this.isSolid(candidate.x, candidate.y)) { monsterOrigin = candidate; break }
+    for (let d = Math.min(WINDOW, distance + 1); d >= 1; d--) {
+      const candidate = middle(ahead.dx * d, ahead.dy * d)
+      if (spots(candidate, 1).length > 0) { monsterOrigin = candidate; break }
     }
     for (const [i, spot] of spots(monsterOrigin, monsters.length).entries()) {
       this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, moves: 0, acted: false })
