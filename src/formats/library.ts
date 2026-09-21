@@ -9,7 +9,7 @@
 
 import { readDax, type DaxArchive } from './dax.js'
 import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSummary } from './ecl.js'
-import { blankRgba, recolour, type Rgba } from './ega.js'
+import { blankRgba, blit, recolour, type Rgba } from './ega.js'
 import { readCharacter, readItems, type Character, type Item } from './character.js'
 import { readItemNames, readItemTypes, type ItemType } from './items.js'
 import { readSpellNames } from './spells.js'
@@ -344,15 +344,43 @@ export class GameLibrary {
   }
 
   /** A monster's combat icon: the area's CPIC block the script named. */
-  async combatIcon(area: number, id: number): Promise<Rgba | undefined> {
-    return (await this.artBlock(`CPIC${area}.DAX`, id))?.frames[0]
+  /** A monster's combat icon from the area's CPIC file; `action` is the swing, block id + 128. */
+  async combatIcon(area: number, id: number, action = false): Promise<Rgba | undefined> {
+    return (await this.artBlock(`CPIC${area}.DAX`, id + (action ? 128 : 0)))?.frames[0]
+      ?? (action ? (await this.artBlock(`CPIC${area}.DAX`, id))?.frames[0] : undefined)
   }
 
-  /** A party member's combat icon: their ICON block, recoloured in their colours. */
-  async partyIcon(character: Character): Promise<Rgba | undefined> {
-    const frame = (await this.artBlock('ICON.DAX', character.icon))?.frames[0]
-      ?? (await this.artBlock('COMSPR.DAX', character.icon))?.frames[0]
-    return frame ? recolour(frame, character.iconColours) : undefined
+  /**
+   * A party member's combat icon, put together the way the original's icon editor
+   * did: the CBODY frame the readied weapon calls for, the CHEAD strip over its top,
+   * the six colour pairs swapped in. Bodies and heads come in four ids each: +64 for
+   * the small size, +128 for the action pose.
+   */
+  async partyIcon(character: Character, action = false): Promise<Rgba | undefined> {
+    const offset = (character.iconSize === 1 ? 64 : 0) + (action ? 128 : 0)
+    const body = (await this.artBlock('CBODY.DAX', character.iconBody + offset))?.frames[0]
+      ?? (await this.artBlock('CBODY.DAX', character.iconBody))?.frames[0]
+    if (!body) return undefined
+    const head = (await this.artBlock('CHEAD.DAX', character.iconHead + offset))?.frames[0]
+      ?? (await this.artBlock('CHEAD.DAX', character.iconHead))?.frames[0]
+    const icon: Rgba = { width: body.width, height: body.height, pixels: new Uint8ClampedArray(body.pixels) }
+    if (head) blit(icon, head, 0, 0)
+    return recolour(icon, character.iconColours)
+  }
+
+  /** The party on horseback, for the wilderness map; block id + 128 is the second frame. */
+  async ridingIcon(id: number, frame = 0): Promise<Rgba | undefined> {
+    return (await this.artBlock('ICON.DAX', id + (frame ? 128 : 0)))?.frames[0]
+  }
+
+  /** A missile or a spell's light from COMSPR: the two frames of block `id` and `id + 128`. */
+  async combatSprite(id: number): Promise<Rgba[]> {
+    const frames: Rgba[] = []
+    for (const at of [id, id + 128]) {
+      const frame = (await this.artBlock('COMSPR.DAX', at))?.frames[0]
+      if (frame) frames.push(frame)
+    }
+    return frames
   }
 
   private async artBlock(file: string, id: number): Promise<DecodedImage | undefined> {

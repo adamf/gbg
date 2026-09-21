@@ -24,6 +24,7 @@ export type { Spell }
 import { Combat, labelMonsters, type Combatant } from './combat.js'
 import { Battle, type Fighter } from './battle.js'
 import { randomItems } from './loot.js'
+import { missileFor, SPRITE } from './sprites.js'
 import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
@@ -62,7 +63,7 @@ export interface SessionUi {
   /** Which kind of fight the player wants. */
   battleMode(monsters: readonly Combatant[]): Promise<'tactical' | 'quick'>
   /** The art a battle is drawn with, before it starts. */
-  battleArt(tiles: readonly Rgba[], decorations: readonly Rgba[], outdoors: boolean): void
+  battleArt(tiles: readonly Rgba[], decorations: readonly Rgba[], outdoors: boolean, sprites: ReadonlyMap<number, readonly Rgba[]>): void
   /** Shows the battle after something happened; `lines` say what. */
   battleUpdate(battle: Battle, lines: readonly string[]): Promise<void>
   /**
@@ -190,6 +191,7 @@ export class GameSession {
     for (const { character, items } of this.roster.members) {
       const missile = items.find((item) => item.readied && (types[item.type]?.range ?? 0) > 0)
       character.attacks.range = missile ? types[missile.type]!.range : undefined
+      character.attacks.missile = missile ? missileFor(missile.type) : undefined
     }
   }
 
@@ -553,7 +555,7 @@ export class GameSession {
       }
       // A bow in its hands gives the record's attack its range; its book gives it spells.
       const bow = monster.items.find((item) => item.readied && (types[item.type]?.range ?? 0) > 0)
-      if (bow) monster.character.attacks.range = types[bow.type]!.range
+      if (bow) { monster.character.attacks.range = types[bow.type]!.range; monster.character.attacks.missile = missileFor(bow.type) }
       if (canCast(monster.character)) autoPrepare(monster.character)
       loaded.push({ member: monster, count: group.count, picture: group.picture })
     }
@@ -597,12 +599,15 @@ export class GameSession {
 
     const mode = await this.ui.battleMode(monsters)
     if (mode === 'tactical' && this.map) {
-      for (const c of party) c.icon = await this.library.partyIcon(c.member.character)
-      const icons = new Map<number, Rgba | undefined>()
+      for (const c of party) {
+        c.icon = await this.library.partyIcon(c.member.character)
+        c.actionIcon = await this.library.partyIcon(c.member.character, true)
+      }
+      const icons = new Map<number, [Rgba | undefined, Rgba | undefined]>()
       for (const c of monsters) {
         if (c.picture === undefined) continue
-        if (!icons.has(c.picture)) icons.set(c.picture, await this.library.combatIcon(this.area, c.picture))
-        c.icon = icons.get(c.picture)
+        if (!icons.has(c.picture)) icons.set(c.picture, [await this.library.combatIcon(this.area, c.picture), await this.library.combatIcon(this.area, c.picture, true)])
+        ;[c.icon, c.actionIcon] = icons.get(c.picture)!
       }
       return this.tacticalFight(party, monsters, random)
     }
@@ -666,7 +671,9 @@ export class GameSession {
   /** The fight on the grid: turns until one side is done, then the same reckoning. */
   private async tacticalFight(party: Combatant[], monsters: Combatant[], random: (max: number) => number): Promise<CombatOutcome> {
     const battle = new Battle(this.map!, party, monsters, this.party, 1, random, this.overhead)
-    this.ui.battleArt(await this.library.combatTiles(this.overhead), await this.library.randomTiles(), this.overhead)
+    const sprites = new Map<number, readonly Rgba[]>()
+    for (const id of Object.values(SPRITE)) sprites.set(id, await this.library.combatSprite(id))
+    this.ui.battleArt(await this.library.combatTiles(this.overhead), await this.library.randomTiles(), this.overhead, sprites)
     let outcome: CombatOutcome = 'won'
     await this.ui.battleUpdate(battle, [`${monsters.length} FOE${monsters.length === 1 ? '' : 'S'}: ${[...new Set(monsters.map((m) => m.member.character.name))].join(', ')}.`])
 

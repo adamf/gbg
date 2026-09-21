@@ -15,6 +15,7 @@ import { buildArena, buildWildArena, type Arena } from './arena.js'
 import { Combat, hits, rollDamage, type Combatant, type Random } from './combat.js'
 import { cast, forget, ready } from './casting.js'
 import { turnOne, UNDEAD } from './undead.js'
+import { SPRITE } from './sprites.js'
 
 const WINDOW = 2
 
@@ -61,6 +62,8 @@ export interface BattleEffect {
   hit?: boolean
   /** An EGA palette index for the spell's light. */
   colour?: number
+  /** A COMSPR block to fly or flash, when the original had art for it. */
+  sprite?: number
 }
 
 export class Battle {
@@ -337,7 +340,8 @@ export class Battle {
   attack(f: Fighter, target: Fighter): string[] {
     const lines: string[] = []
     this.actedThisRound = true
-    const effect: BattleEffect = { shape: this.neighbours(f).includes(target) ? 'lunge' : 'arrow', from: { x: f.x, y: f.y }, to: [{ x: target.x, y: target.y }], hit: false }
+    const melee = this.neighbours(f).includes(target)
+    const effect: BattleEffect = { shape: melee ? 'lunge' : 'arrow', from: { x: f.x, y: f.y }, to: [{ x: target.x, y: target.y }], hit: false, sprite: melee ? undefined : f.combatant.member.character.attacks.missile ?? SPRITE.arrowUp }
     this.effects.push(effect)
     const attacker = f.combatant.member.character
     const defender = target.combatant.member.character
@@ -481,15 +485,16 @@ export class Battle {
     const name = spell.name.toLowerCase()
     let shape: EffectShape = 'glow'
     let colour = 15
+    let sprite: number | undefined
     if (kind === 'damage' || kind === 'harm') {
-      if (name.includes('lightning')) { shape = 'bolt'; colour = 11 }
-      else if (spell.target === 'foes') { shape = 'burst'; colour = name.includes('fire') || name.includes('burning') ? 14 : 13 }
-      else { shape = 'streak'; colour = name.includes('missile') ? 11 : 12 }
-    } else if (kind === 'sleep' || kind === 'hold') { shape = 'sparkle'; colour = 13 }
-    else if (kind === 'heal') { shape = 'sparkle'; colour = 10 }
+      if (name.includes('lightning')) { shape = 'bolt'; colour = 11; sprite = SPRITE.lightning }
+      else if (spell.target === 'foes') { shape = 'burst'; colour = name.includes('fire') || name.includes('burning') ? 14 : 13; sprite = SPRITE.burst }
+      else { shape = 'streak'; colour = name.includes('missile') ? 11 : 12; sprite = name.includes('missile') ? SPRITE.sparkles : undefined }
+    } else if (kind === 'sleep' || kind === 'hold') { shape = 'sparkle'; colour = 13; sprite = SPRITE.sparkles }
+    else if (kind === 'heal') { shape = 'sparkle'; colour = 10; sprite = SPRITE.sparkles }
     else if (kind === 'curse') { shape = 'glow'; colour = 12 }
     else if (kind === 'bless' || kind === 'shield') { shape = 'glow'; colour = 14 }
-    this.effects.push({ shape, colour, from: { x: caster.x, y: caster.y }, to: targets.map((t) => ({ x: t.x, y: t.y })) })
+    this.effects.push({ shape, colour, sprite, from: { x: caster.x, y: caster.y }, to: targets.map((t) => ({ x: t.x, y: t.y })) })
   }
 
   /** First step of a shortest path to a square next to the goal, or nothing. */

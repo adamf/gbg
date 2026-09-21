@@ -74,10 +74,14 @@ export interface Character {
   /** The original's health byte; see STATUSES. */
   statusByte: number
   status: Status
-  attacks: { count: number; dice: number; sides: number; bonus: number; range?: number }
+  attacks: { count: number; dice: number; sides: number; bonus: number; range?: number; missile?: number }
   /** Old-to-new colour pairs, a nibble each, applied to the combat icon. */
   iconColours: number[]
+  /** 1 small (dwarves, gnomes, halflings), 2 normal. */
   iconSize: number
+  /** The combat icon's parts: a CHEAD strip over a CBODY frame, the body chosen by the weapon. */
+  iconHead: number
+  iconBody: number
   /** ICON block holding the combat icon, before recolouring. */
   icon: number
   /** Spell ids the character knows. */
@@ -174,8 +178,10 @@ export function readCharacter(data: Uint8Array): Character {
     status: STATUSES[statusByte] ?? 'okay',
     attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: u8(data, 0x119) },
     iconColours,
-    iconSize: u8(data, 0xc7),
-    icon: u8(data, 0xc0),
+    iconSize: u8(data, 0xc0),
+    iconHead: u8(data, 0xbd),
+    iconBody: u8(data, 0xbe),
+    icon: u8(data, 0xbe),
     spellbook,
     spellSlots,
     memorised: [],

@@ -18,6 +18,8 @@ export interface Combatant {
   label: string
   /** The combat icon, when the art could be found. */
   icon?: Rgba
+  /** The swing: the icon's action pose. */
+  actionIcon?: Rgba
   /** For monsters: the CPIC block their icon is in. */
   picture?: number
 }

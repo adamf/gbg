@@ -21,6 +21,8 @@ export interface BattleArt {
   /** RANDCOM: the cells from 0x22 on. */
   decorations: Rgba[]
   outdoors: boolean
+  /** COMSPR by block id: the two frames of each missile and spell-light. */
+  sprites?: ReadonlyMap<number, readonly Rgba[]>
 }
 
 const canvasCache = new WeakMap<object, HTMLCanvasElement>()
@@ -123,6 +125,39 @@ function centre(view: { x: number; y: number }, at: { x: number; y: number }): {
   return { x: (at.x - view.x) * SQUARE + SQUARE / 2, y: (at.y - view.y) * SQUARE + SQUARE / 2 }
 }
 
+function frameSet(art: BattleArt | undefined, id: number | undefined): readonly Rgba[] | undefined {
+  if (id === undefined) return undefined
+  const set = art?.sprites?.get(id)
+  return set && set.length > 0 ? set : undefined
+}
+
+/**
+ * A missile in flight. Arrows come in three orientations — upright (block 0),
+ * diagonal (1) and across (2), each with its second frame pointing the other way,
+ * and the other diagonal is the mirror; thrown things tumble between their frames.
+ */
+function drawMissile(g: CanvasRenderingContext2D, sprite: readonly Rgba[], id: number, x: number, y: number, dx: number, dy: number, t: number): void {
+  let frame = sprite[0]!
+  let mirror = false
+  if (id <= 2) {
+    // An arrow: pick the orientation and the frame that points the way it flies.
+    const set = sprite
+    if (dx === 0) frame = set[dy > 0 ? 1 : 0] ?? frame
+    else if (dy === 0) { frame = set[dx < 0 ? 1 : 0] ?? frame }
+    else { frame = set[(dx > 0) !== (dy > 0) ? 0 : 1] ?? frame; mirror = (dx < 0 && dy < 0) || (dx > 0 && dy > 0) }
+  } else {
+    frame = sprite[Math.floor(t * 6) % sprite.length]!
+  }
+  const c = toCanvas(frame)
+  if (mirror) {
+    g.save()
+    g.translate(x, y)
+    g.scale(-1, 1)
+    g.drawImage(c, -SQUARE / 2, -SQUARE / 2, SQUARE, SQUARE)
+    g.restore()
+  } else g.drawImage(c, x - SQUARE / 2, y - SQUARE / 2, SQUARE, SQUARE)
+}
+
 function frames(ms: number, draw: (t: number) => void): Promise<void> {
   return new Promise((resolve) => {
     const started = performance.now()
@@ -163,39 +198,55 @@ export async function playEffects(canvas: HTMLCanvasElement, battle: Battle, act
     const colour = EGA[e.colour ?? 15]!
     switch (e.shape) {
       case 'lunge': {
+        // The original swapped the icon for its action pose; a small step sells it.
         const who = battle.at(e.from.x, e.from.y)
         const dx = Math.sign(first.x - from.x)
         const dy = Math.sign(first.y - from.y)
-        await frames(160, (t) => {
+        await frames(200, (t) => {
           base()
-          if (!who?.combatant.icon) return
-          const reach = Math.sin(t * Math.PI) * SQUARE * 0.3
-          g.drawImage(toCanvas(who.combatant.icon), from.x - SQUARE / 2 + dx * reach, from.y - SQUARE / 2 + dy * reach, SQUARE, SQUARE)
+          const icon = who?.combatant.actionIcon ?? who?.combatant.icon
+          if (!icon) return
+          const reach = Math.sin(t * Math.PI) * SQUARE * 0.15
+          g.fillStyle = art?.outdoors ? '#2d5a27' : '#5c5c5c'
+          g.fillRect(from.x - SQUARE / 2, from.y - SQUARE / 2, SQUARE, SQUARE)
+          g.drawImage(toCanvas(icon), from.x - SQUARE / 2 + dx * reach, from.y - SQUARE / 2 + dy * reach, SQUARE, SQUARE)
         })
         if (e.hit) await flash(e.to, EGA[12]!)
         break
       }
       case 'arrow': {
-        await frames(220, (t) => {
+        const sprite = frameSet(art, e.sprite)
+        const dx = Math.sign(first.x - from.x)
+        const dy = Math.sign(first.y - from.y)
+        await frames(260, (t) => {
           base()
           const x = from.x + (first.x - from.x) * t
           const y = from.y + (first.y - from.y) * t
-          const len = 10
-          const angle = Math.atan2(first.y - from.y, first.x - from.x)
-          g.strokeStyle = EGA[6]!
-          g.lineWidth = 2
-          g.beginPath()
-          g.moveTo(x - Math.cos(angle) * len, y - Math.sin(angle) * len)
-          g.lineTo(x, y)
-          g.stroke()
+          if (sprite) drawMissile(g, sprite, e.sprite ?? 0, x, y, dx, dy, t)
+          else {
+            const len = 10
+            const angle = Math.atan2(first.y - from.y, first.x - from.x)
+            g.strokeStyle = EGA[6]!
+            g.lineWidth = 2
+            g.beginPath()
+            g.moveTo(x - Math.cos(angle) * len, y - Math.sin(angle) * len)
+            g.lineTo(x, y)
+            g.stroke()
+          }
         })
         if (e.hit) await flash(e.to, EGA[12]!)
         break
       }
       case 'streak': {
+        const sprite = frameSet(art, e.sprite)
         for (const target of targets) {
-          await frames(240, (t) => {
+          await frames(260, (t) => {
             base()
+            if (sprite) {
+              const frame = sprite[Math.floor(t * 8) % sprite.length]!
+              g.drawImage(toCanvas(frame), from.x + (target.x - from.x) * t - SQUARE / 2, from.y + (target.y - from.y) * t - SQUARE / 2, SQUARE, SQUARE)
+              return
+            }
             g.fillStyle = colour
             for (let i = 0; i < 4; i++) {
               const k = Math.max(0, t - i * 0.08)
@@ -207,9 +258,20 @@ export async function playEffects(canvas: HTMLCanvasElement, battle: Battle, act
         break
       }
       case 'bolt': {
+        const sprite = frameSet(art, e.sprite)
         const far = targets.reduce((best, t) => (Math.hypot(t.x - from.x, t.y - from.y) > Math.hypot(best.x - from.x, best.y - from.y) ? t : best), first)
-        await frames(220, (t) => {
+        await frames(300, (t) => {
           base()
+          if (sprite) {
+            // The bolt's art stamped along its path, flickering between its two frames.
+            const steps = Math.max(1, Math.round(Math.hypot(far.x - from.x, far.y - from.y) / SQUARE))
+            const frame = sprite[Math.floor(t * 10) % sprite.length]!
+            for (let i = 1; i <= steps; i++) {
+              const k = i / steps
+              g.drawImage(toCanvas(frame), from.x + (far.x - from.x) * k - SQUARE / 2, from.y + (far.y - from.y) * k - SQUARE / 2, SQUARE, SQUARE)
+            }
+            return
+          }
           g.strokeStyle = t % 0.3 < 0.15 ? colour : EGA[15]!
           g.lineWidth = 3
           g.beginPath()
@@ -226,8 +288,15 @@ export async function playEffects(canvas: HTMLCanvasElement, battle: Battle, act
         break
       }
       case 'burst': {
-        await frames(320, (t) => {
+        const sprite = frameSet(art, e.sprite)
+        await frames(360, (t) => {
           base()
+          if (sprite) {
+            // The small burst, then the large one, on every square the spell reached.
+            const frame = sprite[t < 0.4 ? 0 : sprite.length - 1]!
+            for (const target of targets) g.drawImage(toCanvas(frame), target.x - SQUARE / 2, target.y - SQUARE / 2, SQUARE, SQUARE)
+            return
+          }
           g.globalAlpha = 1 - t * 0.6
           g.fillStyle = t < 0.5 ? colour : EGA[12]!
           g.beginPath()
@@ -239,8 +308,14 @@ export async function playEffects(canvas: HTMLCanvasElement, battle: Battle, act
         break
       }
       case 'sparkle': {
-        await frames(320, (t) => {
+        const sprite = frameSet(art, e.sprite)
+        await frames(360, (t) => {
           base()
+          if (sprite) {
+            const frame = sprite[Math.floor(t * 8) % sprite.length]!
+            for (const target of targets) g.drawImage(toCanvas(frame), target.x - SQUARE / 2, target.y - SQUARE / 2, SQUARE, SQUARE)
+            return
+          }
           g.fillStyle = colour
           for (const target of targets) {
             for (let i = 0; i < 8; i++) {
