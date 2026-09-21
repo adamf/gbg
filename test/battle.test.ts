@@ -255,3 +255,23 @@ describe('the rules of the round', () => {
     expect(runner.combatant.member.character.status).toBe('running')
   })
 })
+
+
+describe('facing and morale', () => {
+  it('pays a bonus and the rear armour class from behind, and a thief backstabs for double', () => {
+    const data = new Uint8Array(CHARACTER_RECORD_SIZE)
+    data[0] = 5; for (const [i, ch] of [...'THIEF'].entries()) data[1 + i] = ch.charCodeAt(0)
+    data[0x2e] = 7; data[0x32] = 10; data[0x11b] = 10; data[0x111] = 60 - 10; data[0x2d] = 60 - 20; data[0xa1] = 2; data[0x115] = 1; data[0x117] = 4; data[0x11c] = 12; data[0x9c] = 1
+    const thief = readCharacter(data)
+    const orc = readCharacter((() => { const d = new Uint8Array(CHARACTER_RECORD_SIZE); d[0] = 3; d[1] = 79; d[2] = 82; d[3] = 67; d[0x32] = 20; d[0x11b] = 20; d[0x111] = 60 - 6; d[0x112] = 60 - 8; d[0x2d] = 60 - 19; d[0xa1] = 2; d[0x115] = 1; d[0x117] = 8; d[0x11c] = 9; return d })())
+    const battle = new Battle(corridor(), [{ member: { character: thief, items: [] }, label: 'THIEF' }], labelMonsters([{ member: { character: orc, items: [] }, count: 1 }]), { row: 8, col: 8, facing: 'north' }, 1, (max) => Math.min(15, max))
+    const t = battle.fighters.find((f) => f.side === 'party')!
+    const o = battle.fighters.find((f) => f.side === 'monster')!
+    o.facing = { dx: 0, dy: -1 }
+    t.x = o.x; t.y = o.y + 1
+    const lines = battle.attack(t, o)
+    expect(lines[0]).toContain('BACKSTAB')
+    // A d20 of 16 with the bonuses hits the rear armour class; the d4 comes up 4, doubled.
+    expect(lines.some((l) => l.includes('FOR 8'))).toBe(true)
+  })
+})

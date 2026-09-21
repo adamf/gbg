@@ -25,6 +25,7 @@ import { Combat, labelMonsters, type Combatant } from './combat.js'
 import { Battle, type Fighter } from './battle.js'
 import { randomItems } from './loot.js'
 import { missileFor, SPRITE } from './sprites.js'
+import { refit } from './burden.js'
 import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
@@ -189,11 +190,7 @@ export class GameSession {
    */
   private async armRanges(): Promise<void> {
     const types = await this.types()
-    for (const { character, items } of this.roster.members) {
-      const missile = items.find((item) => item.readied && (types[item.type]?.range ?? 0) > 0)
-      character.attacks.range = missile ? types[missile.type]!.range : undefined
-      character.attacks.missile = missile ? missileFor(missile.type) : undefined
-    }
+    for (const member of this.roster.members) refit(member.character, member.items, types)
   }
 
   get busy(): boolean {
@@ -715,6 +712,7 @@ export class GameSession {
   /** The fight on the grid: turns until one side is done, then the same reckoning. */
   private async tacticalFight(party: Combatant[], monsters: Combatant[], random: (max: number) => number): Promise<CombatOutcome> {
     const battle = new Battle(this.map!, party, monsters, this.party, 1, random, this.overhead)
+    battle.types = await this.types()
     const sprites = new Map<number, readonly Rgba[]>()
     for (const id of Object.values(SPRITE)) sprites.set(id, await this.library.combatSprite(id))
     this.ui.battleArt(await this.library.combatTiles(this.overhead), await this.library.randomTiles(), this.overhead, sprites)

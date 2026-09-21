@@ -60,7 +60,11 @@ one server-side, or check a `.DAX` into git is the wrong change.
   three a round and get up unless burnt or stood on, and must be finished; ghouls
   paralyse, spiders poison, wights drain, each with its save; fighters sweep small fry;
   the field's edge is the way out; rest takes a day a hit point; the halls hold to the
-  manual's race limits; shops appraise gems.
+  manual's race limits; shops appraise gems. Arrows, quarrels and thrown darts and axes
+  are spent; the load slows a character by the first edition's steps, strength counted;
+  a blow from behind meets the rear armour class with a bonus, and a thief's is a
+  backstab for double; monsters badly hurt or half down check morale and may run,
+  paying nothing.
 
 - **Outdoors** — when a script clears the in-dungeon word the map is shown from above
   and a square takes an hour; the wilderness blocks (25 to 27) carry their own
@@ -76,7 +80,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   formats, with the bytes this program does not model carried through from the read.
 
 Not here yet: the overland map the wilderness scripts count squares on (T's travel
-menu stands in for it), monsters' special attacks, and scrolls.
+menu stands in for it; the three wilderness scripts are sixteen-by-thirty-two regions
+handed across their edges, the terrain read by the engine's own CALLs 0xC018 and
+0xC01B, and no data file holds it), monsters' special attacks as data rather than by
+name, and scrolls.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. `scripts/playthrough.ts` plays
 the game for thousands of steps with a seeded party — menus, fights, camp, training —

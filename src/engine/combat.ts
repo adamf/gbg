@@ -320,7 +320,7 @@ export class Combat {
    */
   experience(): number {
     return this.monsters
-      .filter((m) => !standing(m))
+      .filter((m) => !standing(m) && m.member.character.status !== 'running')
       .reduce((total, m) => {
         const c = m.member.character
         return total + c.experienceBase + c.experiencePerHp * c.hpRolled

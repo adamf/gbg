@@ -16,6 +16,9 @@ import { Combat, hits, monsterKind, rollDamage, saves, takeDamage, targetable, t
 import { cast, forget, ready } from './casting.js'
 import { turnOne, UNDEAD } from './undead.js'
 import { SPRITE } from './sprites.js'
+import { spendMissile } from './burden.js'
+import { refit } from './burden.js'
+import type { ItemType } from '../formats/items.js'
 
 const WINDOW = 2
 
@@ -26,6 +29,8 @@ export interface Fighter {
   side: 'party' | 'monster'
   x: number
   y: number
+  /** Which way the fighter faces: the way it last moved or struck. */
+  facing: Step
   /** Squares left to move this turn. */
   moves: number
   /** True once the fighter has struck, shot or cast this turn. */
@@ -172,7 +177,7 @@ export class Battle {
 
     const partyOrigin = middle(0, 0)
     for (const [i, spot] of spots(partyOrigin, party.length).entries()) {
-      this.fighters.push({ combatant: party[i]!, side: 'party', ...spot, moves: 0, acted: false })
+      this.fighters.push({ combatant: party[i]!, side: 'party', ...spot, facing: { ...ahead }, moves: 0, acted: false })
     }
     // Everything the party can walk to, with how far it is: the monsters must stand
     // somewhere in here, or the two sides would never meet.
@@ -222,7 +227,7 @@ export class Battle {
       if (candidate && Math.abs(candidate.x - (p.x + 3)) + Math.abs(candidate.y - (p.y + 3)) <= 8) { monsterOrigin = candidate; break }
     }
     for (const [i, spot] of spots(monsterOrigin, monsters.length, region).entries()) {
-      this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, moves: 0, acted: false })
+      this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, facing: { dx: -ahead.dx, dy: -ahead.dy }, moves: 0, acted: false })
     }
   }
 
@@ -230,6 +235,7 @@ export class Battle {
 
   /** Rounds in a row in which nobody on either side struck, moved or cast. */
   idleRounds = 0
+  private readonly moraleChecked = new Set<Character>()
   private actedThisRound = false
 
   /** Three empty rounds: the two sides cannot get at each other. */
@@ -273,6 +279,16 @@ export class Battle {
         c.hpCurrent--
         if (c.hpCurrent <= -10) { c.status = 'dead'; c.statusByte = 6; c.hpCurrent = 0; lines.push(`${f.combatant.label} HAS DIED.`) }
         continue
+      }
+      // Morale: a monster badly hurt, or in a group half down, may break and run.
+      if (c.race === 0 && c.status === 'okay' && !this.moraleChecked.has(c)) {
+        const group = this.fighters.filter((o) => o.side === 'monster')
+        const down = group.filter((o) => !standing(o.combatant.member.character)).length
+        if (c.hpCurrent * 2 < c.hpMax || down * 2 >= group.length) {
+          this.moraleChecked.add(c)
+          const hold = c.control > 0 ? c.control : 12
+          if (this.random(19) + 1 > hold) { c.status = 'running'; c.statusByte = 3; lines.push(`${f.combatant.label} FLEES!`); continue }
+        }
       }
       if (c.race === 0 && monsterKind(c) === 'troll' && !c.burnt) {
         if (c.status === 'okay' && c.hpCurrent < c.hpMax) c.hpCurrent = Math.min(c.hpMax, c.hpCurrent + 3)
@@ -349,6 +365,7 @@ export class Battle {
     if (!this.canMove(f, step)) return false
     f.x += step.dx
     f.y += step.dy
+    f.facing = { dx: step.dx, dy: step.dy }
     f.moves--
     this.actedThisRound = true
     // The field's edge is the way out: a party member who reaches it has run.
@@ -386,18 +403,24 @@ export class Battle {
     const helpless = defender.status === 'asleep' || defender.status === 'held'
     const attacks = this.combat.attacksOf(attacker)
     const ours = f.side === 'party'
+    f.facing = { dx: Math.sign(target.x - f.x), dy: Math.sign(target.y - f.y) }
+    // From behind: the target's rear armour class, a bonus to hit, and a thief's backstab.
+    const behind = (f.x - target.x) * target.facing.dx + (f.y - target.y) * target.facing.dy < 0
+    const backstab = behind && melee && (attacker.levels[6] ?? 0) > 0
+    if (behind) lines.push(`${f.combatant.label} STRIKES FROM BEHIND${backstab ? ' — A BACKSTAB' : ''}!`)
     if (!melee && this.combat.has(defender, 'missileProof')) {
       f.acted = true
       f.moves = 0
       return [`THE MISSILE GLANCES OFF ${target.combatant.label}.`]
     }
     for (let i = 0; i < attacks && targetable(target.combatant); i++) {
-      const roll = this.random(19) + 1 + this.combat.hitBonusOf(attacker)
-      if (!helpless && !hits(attacker, { ...defender, ac: this.combat.acOf(defender) }, roll)) {
+      const roll = this.random(19) + 1 + this.combat.hitBonusOf(attacker) + (behind ? 2 : 0) + (backstab ? 2 : 0)
+      const ac = behind ? this.combat.acOf(defender) + (defender.acBehind - defender.ac) : this.combat.acOf(defender)
+      if (!helpless && !hits(attacker, { ...defender, ac }, roll)) {
         lines.push(`${f.combatant.label} MISSES ${target.combatant.label}.`)
         continue
       }
-      const damage = Math.max(1, rollDamage(attacker, this.random) + this.combat.damageBonusOf(attacker)) * (helpless ? 2 : 1)
+      const damage = Math.max(1, rollDamage(attacker, this.random) + this.combat.damageBonusOf(attacker)) * (helpless ? 2 : 1) * (backstab && i === 0 ? 2 : 1)
       effect.hit = true
       const fire = attacker.attacks.missile === SPRITE.flask
       const result = takeDamage(defender, damage, fire)
@@ -416,10 +439,17 @@ export class Battle {
         lines.push(`${f.combatant.label} SWEEPS ${other.combatant.label} FOR ${damage}.${result === 'hurt' ? '' : ` ${other.combatant.label} IS ${result.toUpperCase()}!`}`)
       }
     }
+    if (!melee && this.types) {
+      const out = spendMissile(f.combatant.member.items, this.types)
+      if (out) { lines.push(out); refit(attacker, f.combatant.member.items, this.types) }
+    }
     f.acted = true
     f.moves = 0
     return lines
   }
+
+  /** The item type table, when the session hands it over, for spending ammunition. */
+  types: readonly ItemType[] | undefined
 
   /**
    * What a monster's touch does beyond the wound, by its kind: a ghoul's paralysis,
