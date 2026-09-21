@@ -60,6 +60,33 @@ describe('a fight on the arena', () => {
     expect(battle.fighters.filter((f) => f.side === 'monster').every((o) => o.y < hero.y)).toBe(true)
   })
 
+  it('never stands the monsters where the party cannot reach them', () => {
+    // The corridor, cut in two by a wall right in front of the party.
+    const cut = readGeoMap(1, buildGeoBlock((row, col) => {
+      if (col !== 8 || row < 2 || row > 12) return { n: 1, e: 1, s: 1, w: 1 }
+      return { n: row === 8 ? 1 : 0, e: 1, s: row === 7 ? 1 : 0, w: 1 }
+    }))
+    const party = ['HERO', 'SECOND', 'THIRD', 'FOURTH'].map((name) => ({ member: { character: fighter(name, 20), items: [] }, label: name }))
+    const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0), items: [] }, count: 2 }])
+    const battle = new Battle(cut, party, monsters, { row: 8, col: 8, facing: 'north' }, 1, () => 0)
+    const hero = battle.fighters.find((f) => f.side === 'party')!
+    const seen = new Set([`${hero.x},${hero.y}`])
+    const queue = [{ x: hero.x, y: hero.y }]
+    while (queue.length > 0) {
+      const here = queue.shift()!
+      for (const step of EIGHT_STEPS) {
+        const x = here.x + step.dx
+        const y = here.y + step.dy
+        if (seen.has(`${x},${y}`) || battle.isSolid(x, y)) continue
+        seen.add(`${x},${y}`)
+        queue.push({ x, y })
+      }
+    }
+    for (const orc of battle.fighters.filter((f) => f.side === 'monster')) expect(seen.has(`${orc.x},${orc.y}`)).toBe(true)
+    // And the party is not split across a wall either.
+    for (const friend of battle.fighters.filter((f) => f.side === 'party')) expect(seen.has(`${friend.x},${friend.y}`)).toBe(true)
+  })
+
   it('moves with the points it has, strikes neighbours, and marches monsters in', () => {
     const party = [{ member: { character: fighter('HERO', 20, 7, 12), items: [] }, label: 'HERO' }]
     const monsters = labelMonsters([{ member: { character: fighter('ORC', 6, 0, 6), items: [] }, count: 1 }])

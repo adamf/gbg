@@ -105,7 +105,7 @@ export class Battle {
   /** Puts the party on its square and the monsters ahead, as far off as they were seen. */
   private place(party: Combatant[], monsters: Combatant[], at: { facing: Direction }, distance: number): void {
     const ahead = STEPS[at.facing]
-    const spots = (origin: { x: number; y: number }, count: number): { x: number; y: number }[] => {
+    const spots = (origin: { x: number; y: number }, count: number, within?: Map<string, number>): { x: number; y: number }[] => {
       // Spread out from the origin through the floor, never across a wall, so the
       // party stands together in its own room.
       const found: { x: number; y: number }[] = []
@@ -114,34 +114,73 @@ export class Battle {
       seen.add(`${origin.x},${origin.y}`)
       while (queue.length > 0 && found.length < count) {
         const here = queue.shift()!
-        if (this.free(here.x, here.y)) found.push(here)
+        if (this.free(here.x, here.y) && (!within || within.has(`${here.x},${here.y}`))) found.push(here)
         for (const step of EIGHT_STEPS) {
           const x = here.x + step.dx
           const y = here.y + step.dy
           const key = `${x},${y}`
-          if (seen.has(key) || this.isSolid(x, y)) continue
+          if (seen.has(key) || this.isSolid(x, y) || (within && !within.has(key))) continue
           seen.add(key)
           queue.push({ x, y })
         }
       }
       return found
     }
+    // The nearest floor to a point: a square's middle can land on a wall piece, and
+    // a search that starts inside a wall would leak through to the other side of it.
+    const nearestFloor = (origin: { x: number; y: number }): { x: number; y: number } => {
+      const seen = new Set<string>([`${origin.x},${origin.y}`])
+      const queue = [origin]
+      while (queue.length > 0) {
+        const here = queue.shift()!
+        if (!this.isSolid(here.x, here.y)) return here
+        for (const step of EIGHT_STEPS) {
+          const x = here.x + step.dx
+          const y = here.y + step.dy
+          if (x < 0 || y < 0 || x >= this.width || y >= this.height || seen.has(`${x},${y}`)) continue
+          seen.add(`${x},${y}`)
+          queue.push({ x, y })
+        }
+      }
+      return origin
+    }
     const middle = (pdx: number, pdy: number): { x: number; y: number } => {
       const p = this.arena.patch(pdx, pdy)
-      return { x: p.x + 3, y: p.y + 3 }
+      return nearestFloor({ x: p.x + 3, y: p.y + 3 })
     }
 
     const partyOrigin = middle(0, 0)
     for (const [i, spot] of spots(partyOrigin, party.length).entries()) {
       this.fighters.push({ combatant: party[i]!, side: 'party', ...spot, moves: 0, acted: false })
     }
-    // The monsters stand in the square as far ahead as they were seen; nearer if that is rock.
-    let monsterOrigin = partyOrigin
+    // Everything the party can walk to, with how far it is: the monsters must stand
+    // somewhere in here, or the two sides would never meet.
+    const region = new Map<string, number>()
+    let farthest = partyOrigin
+    {
+      const queue = [partyOrigin]
+      region.set(`${partyOrigin.x},${partyOrigin.y}`, 0)
+      while (queue.length > 0) {
+        const here = queue.shift()!
+        const far = region.get(`${here.x},${here.y}`)!
+        if (far > region.get(`${farthest.x},${farthest.y}`)!) farthest = here
+        for (const step of EIGHT_STEPS) {
+          const x = here.x + step.dx
+          const y = here.y + step.dy
+          if (region.has(`${x},${y}`) || this.isSolid(x, y)) continue
+          region.set(`${x},${y}`, far + 1)
+          queue.push({ x, y })
+        }
+      }
+    }
+    // The monsters stand in the square as far ahead as they were seen; nearer if that
+    // is rock or walled off. If nothing ahead connects, they come from the far end.
+    let monsterOrigin = farthest
     for (let d = Math.min(WINDOW, distance + 1); d >= 1; d--) {
       const candidate = middle(ahead.dx * d, ahead.dy * d)
-      if (spots(candidate, 1).length > 0) { monsterOrigin = candidate; break }
+      if (spots(candidate, 1, region).length > 0) { monsterOrigin = candidate; break }
     }
-    for (const [i, spot] of spots(monsterOrigin, monsters.length).entries()) {
+    for (const [i, spot] of spots(monsterOrigin, monsters.length, region).entries()) {
       this.fighters.push({ combatant: monsters[i]!, side: 'monster', ...spot, moves: 0, acted: false })
     }
   }
@@ -151,6 +190,7 @@ export class Battle {
   private startRound(): void {
     this.round++
     this.combat.round = this.round
+    this.combat.stir()
     this.order = this.fighters
       .filter((f) => able(f.combatant.member.character))
       .map((f) => ({ f, initiative: this.random(9) + Math.floor(f.combatant.member.character.movement / 3) }))
@@ -312,17 +352,22 @@ export class Battle {
    * bow and nobody is on it, otherwise close on the nearest of the party and strike.
    */
   monsterTurn(f: Fighter): string[] {
+    return this.autoTurn(f)
+  }
+
+  /** The same for either side — what a party member does when the computer plays them. */
+  autoTurn(f: Fighter): string[] {
     const lines: string[] = []
     const me = f.combatant.member.character
     const target = (): Fighter | undefined => {
-      const foes = this.fighters.filter((o) => o.side === 'party' && standing(o.combatant.member.character))
+      const foes = this.fighters.filter((o) => o.side !== f.side && standing(o.combatant.member.character))
       return foes.sort((a, b) => (Math.abs(a.x - f.x) + Math.abs(a.y - f.y)) - (Math.abs(b.x - f.x) + Math.abs(b.y - f.y)))[0]
     }
 
     const spells = ready(me).filter((s) => s.target === 'foe' || s.target === 'foes')
     if (spells.length > 0) {
       const spell = spells[this.random(spells.length - 1)]!
-      const foes = this.fighters.filter((o) => o.side === 'party' && able(o.combatant.member.character))
+      const foes = this.fighters.filter((o) => o.side !== f.side && able(o.combatant.member.character))
       const chosen = spell.target === 'foe' ? [target()].filter((t): t is Fighter => t !== undefined) : foes.slice(0, spell.effect.count ?? 99)
       if (chosen.length > 0) {
         forget(me, spell.id)

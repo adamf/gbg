@@ -65,6 +65,8 @@ export const POOL_ADDRESSES = {
   /** Resting: a check every this many hours, and the chance of an interruption. */
   restPeriod: 0x6dd2,
   restChance: 0x6dd3,
+  /** How the last fight ended, for the scripts: 0 won, 0x80 lost, 0x81 the party ran. */
+  combatResult: 0x6dc7,
   /** Set by a script before COMBAT to mean a temple or a shop rather than a fight. */
   enterTemple: 0x6de2,
   enterShop: 0x6e6c,

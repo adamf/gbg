@@ -386,6 +386,8 @@ where Curse has 100. Offsets checked against every character Pool of Radiance sh
 | 0xA1 | attacks per round, doubled |
 | 0xA9 | base armour class, `60 - AC` |
 | 0xAC | experience, `i32` |
+| 0xB1 | hit points rolled, before the constitution bonus |
+| 0xB8, 0xBA | what a fallen monster is worth: base experience `i16`, plus this much per hit point rolled |
 | 0xC0 | combat icon: a block of ICON.DAX |
 | 0xC1 | six colour swaps for that icon, old nibble high, new nibble low; then icon size |
 | 0x10C | health status |

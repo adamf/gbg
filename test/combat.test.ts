@@ -17,9 +17,33 @@ function fighter(name: string, hp: number, ac: number, thac0: number, dice: [num
   data[0x117] = dice[1]
   data[0x119] = dice[2]
   data[0x11c] = 9
-  data[0xac] = exp
+  // Monsters are priced as a base value plus so much per hit point rolled.
+  data[0xb8] = exp
+  data[0xb1] = hp
+  data[0xba] = exp ? 1 : 0
   return readCharacter(data)
 }
+
+describe('helplessness', () => {
+  it('wears off when nobody on either side can act, and after ten rounds regardless', () => {
+    const party = [{ member: { character: fighter('HERO', 12, 2, 20, [1, 8, 2]), items: [] }, label: 'HERO' }]
+    const monsters = labelMonsters([{ member: { character: fighter('ORC', 5, 6, 19, [1, 8, 0], 15), items: [] }, count: 1 }])
+    const combat = new Combat(party, monsters, () => 0)
+    party[0]!.member.character.status = 'asleep'
+    monsters[0]!.member.character.status = 'held'
+    combat.stir()
+    expect(party[0]!.member.character.status).toBe('okay')
+    expect(monsters[0]!.member.character.status).toBe('okay')
+
+    monsters[0]!.member.character.status = 'held'
+    combat.round = 1
+    combat.stir()
+    expect(monsters[0]!.member.character.status).toBe('held')
+    combat.round = 11
+    combat.stir()
+    expect(monsters[0]!.member.character.status).toBe('okay')
+  })
+})
 
 describe('to-hit and damage', () => {
   it('needs THAC0 minus AC on the die, and a 20 always lands', () => {
@@ -54,7 +78,7 @@ describe('a fight', () => {
     }
     expect(combat.over).toBe(true)
     expect(combat.monstersStanding.length).toBe(0)
-    expect(combat.experience()).toBe(30)
+    expect(combat.experience()).toBe(40)
     expect(party[0]!.member.character.hpCurrent).toBeLessThan(12)
     expect(monsters.every((m) => m.member.character.status === 'dead')).toBe(true)
   })

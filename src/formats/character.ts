@@ -65,6 +65,10 @@ export interface Character {
   control: number
   money: number[]
   experience: number
+  /** What a monster is worth when it falls: base plus per-hit-point times the hit points rolled. */
+  experienceBase: number
+  experiencePerHp: number
+  hpRolled: number
   /** For monsters: 4 is the animated dead, which clerics can turn. */
   monsterType: number
   /** The original's health byte; see STATUSES. */
@@ -163,6 +167,9 @@ export function readCharacter(data: Uint8Array): Character {
     control: u8(data, 0x85),
     money,
     experience: u8(data, 0xac) | (u8(data, 0xad) << 8) | (u8(data, 0xae) << 16) | (u8(data, 0xaf) << 24),
+    experienceBase: i16(data, 0xb8),
+    experiencePerHp: u8(data, 0xba),
+    hpRolled: u8(data, 0xb1),
     statusByte,
     status: STATUSES[statusByte] ?? 'okay',
     attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: u8(data, 0x119) },

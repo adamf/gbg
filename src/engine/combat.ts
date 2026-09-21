@@ -72,6 +72,7 @@ export class Combat {
   private readonly acBonus = new Map<Character, number>()
   /** Who has already acted this round — casters, mostly. */
   readonly acted = new Set<Character>()
+  private readonly helplessSince = new Map<Character, number>()
 
   constructor(
     readonly party: Combatant[],
@@ -121,9 +122,29 @@ export class Combat {
     if (c.member.character.status === 'asleep') { c.member.character.status = 'okay' }
   }
 
+  /**
+   * Sleep and paralysis wear off: after ten rounds, or at once when nobody on either
+   * side is left able to act, so a fight cannot stall with everyone lying down.
+   */
+  stir(): void {
+    const all = [...this.party, ...this.monsters]
+    const nobody = !all.some((c) => alive(c) && !helpless(c))
+    for (const c of all) {
+      const character = c.member.character
+      if (!helpless(c)) { this.helplessSince.delete(character); continue }
+      const since = this.helplessSince.get(character) ?? this.round
+      this.helplessSince.set(character, since)
+      if (nobody || this.round - since >= 10) {
+        character.status = 'okay'
+        this.helplessSince.delete(character)
+      }
+    }
+  }
+
   /** Everyone acts once, in a random order that favours the quick. */
   next(): string[] {
     this.round++
+    this.stir()
     const lines: string[] = []
     const order = [...this.party.filter(alive), ...this.monsters.filter(alive)]
       .map((c) => ({ c, initiative: this.random(9) + Math.floor(c.member.character.movement / 3) }))
@@ -163,11 +184,17 @@ export class Combat {
     return lines
   }
 
-  /** Experience for the monsters that fell, split across the party members still up. */
+  /**
+   * Experience for the monsters that fell, the way the original priced them: a base
+   * value plus so much per hit point rolled. (coab `calc_battle_exp`.)
+   */
   experience(): number {
     return this.monsters
       .filter((m) => !standing(m))
-      .reduce((total, m) => total + m.member.character.experience, 0)
+      .reduce((total, m) => {
+        const c = m.member.character
+        return total + c.experienceBase + c.experiencePerHp * c.hpRolled
+      }, 0)
   }
 
   /** Clears what a fight did to the party: sleepers wake, the held are let go. */

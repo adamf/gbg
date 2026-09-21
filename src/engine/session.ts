@@ -103,6 +103,8 @@ export interface Snapshot {
 export class GameSession {
   readonly memory = new EclMemory()
   readonly roster = new Roster()
+  /** The dice. Replaceable, so a run can be replayed. */
+  random: (max: number) => number = (max) => Math.floor(Math.random() * (max + 1))
   private readonly vm: EclVm
   private program: EclProgram | undefined
   private blockId = 0
@@ -175,6 +177,11 @@ export class GameSession {
 
   get busy(): boolean {
     return this.running
+  }
+
+  /** Which script is running. */
+  get scriptId(): number {
+    return this.blockId
   }
 
   /** Enters a level from the list: runs the script that loads it, which loads it. */
@@ -254,7 +261,7 @@ export class GameSession {
   private async partyMenu(): Promise<void> {
     const mask = this.memory.read(POOL_ADDRESSES.trainingMask)
     if (mask === 0) return
-    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const random = this.random
     for (;;) {
       const candidates = this.roster.members
         .map((member) => ({ member, tracks: readyToTrain(member.character, mask) }))
@@ -282,9 +289,11 @@ export class GameSession {
   private async campMenu(): Promise<void> {
     {
       for (;;) {
-        const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax)
-        const choice = await this.ui.menu(
-          `CAMP. ${hurt.length === 0 ? 'EVERYONE IS WELL.' : `${hurt.length} NEED REST.`}`,
+        // The dead need a temple, not a night's sleep.
+        const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax && m.character.status !== 'dead')
+        const unready = this.roster.members.filter((m) => m.character.prepared.length > m.character.memorised.length)
+        const state = hurt.length > 0 ? `${hurt.length} NEED REST.` : unready.length > 0 ? 'SPELLS TO MEMORISE.' : 'EVERYONE IS WELL.'
+        const choice = await this.ui.menu(`CAMP. ${state}`,
           ['REST', 'MEMORISE', 'CAST', 'USE', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
         if (choice === 0) {
           if (await this.rest()) return
@@ -312,7 +321,7 @@ export class GameSession {
     const chance = this.memory.read(POOL_ADDRESSES.restChance)
     for (let hour = 0; hour < HOURS_PER_REST; hour++) {
       this.advanceTime(60)
-      if ((hour + 1) % period === 0 && chance > 0 && Math.floor(Math.random() * 100) < chance) {
+      if ((hour + 1) % period === 0 && chance > 0 && this.random(99) < chance) {
         this.ui.print('THE PARTY IS DISTURBED!', true)
         await this.runEntry(this.program!.entryPoints.campInterrupted)
         return true
@@ -409,7 +418,7 @@ export class GameSession {
     try {
       await work()
     } catch (error) {
-      this.ui.note(`script failed: ${error instanceof Error ? error.message : String(error)}`)
+      this.ui.note(`script failed: ${error instanceof Error ? `${error.message}\n${error.stack?.split('\n').slice(1, 4).join('\n')}` : String(error)}`)
     } finally {
       this.running = false
       this.settle()
@@ -456,6 +465,10 @@ export class GameSession {
    */
   private async runEntry(entry: number): Promise<boolean> {
     const result = await this.vm.run(entry)
+    if (result.reason === 'newEcl' && result.newEcl === 0xff) {
+      // The original reloaded "block 255" and looped on the missing block; nothing to load.
+      return false
+    }
     if (result.reason === 'newEcl' && result.newEcl !== undefined) {
       await this.loadScript(result.newEcl)
       await this.runStart()
@@ -490,6 +503,7 @@ export class GameSession {
 
   /** Runs a fight against the groups LOAD MONSTER queued, a round at a time. */
   private async fight(groups: readonly MonsterGroup[]): Promise<CombatOutcome> {
+    this.memory.write(POOL_ADDRESSES.combatResult, 0)
     if (groups.length === 0) {
       if (this.memory.read(POOL_ADDRESSES.enterTemple) === 1) {
         this.memory.write(POOL_ADDRESSES.enterTemple, 0)
@@ -518,12 +532,18 @@ export class GameSession {
       loaded.push({ member: monster, count: group.count, picture: group.picture })
     }
     if (loaded.length === 0) return this.ui.combat(groups)
+    const random = this.random
+    const outcome = await this.fightLoaded(loaded, random)
+    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : outcome === 'fled' ? 0x81 : 0x80)
+    return outcome
+  }
+
+  private async fightLoaded(loaded: { member: Member; count: number; picture: number }[], random: (max: number) => number): Promise<CombatOutcome> {
 
     const fighters = this.champion ? [this.champion] : this.roster.members
     this.champion = undefined
     const party: Combatant[] = fighters.map((member) => ({ member, label: member.character.name }))
     const monsters = labelMonsters(loaded)
-    const random = (max: number) => Math.floor(Math.random() * (max + 1))
 
     const mode = await this.ui.battleMode(monsters)
     if (mode === 'tactical' && this.map) {
@@ -564,6 +584,14 @@ export class GameSession {
     }
     combat.finish()
 
+    return this.reckon(combat, outcome)
+  }
+
+  /**
+   * After the fight: the fallen monsters' experience is split across the survivors,
+   * and what they carried — coins and items — lies on the ground for the taking.
+   */
+  private async reckon(combat: Combat, outcome: CombatOutcome): Promise<CombatOutcome> {
     if (outcome !== 'fled') outcome = combat.party.some((c) => c.member.character.status === 'okay') ? 'won' : 'lost'
     if (outcome === 'won') {
       const experience = combat.experience()
@@ -572,6 +600,11 @@ export class GameSession {
         const each = Math.floor(experience / standing.length)
         for (const member of standing) member.character.experience += each
         this.ui.print(`EACH SURVIVOR GAINS ${each} EXPERIENCE.`, true)
+      }
+      for (const m of combat.monsters) {
+        if (m.member.character.status === 'okay' || m.member.character.status === 'running') continue
+        m.member.character.money.forEach((n, kind) => { this.pool.coins[kind] = (this.pool.coins[kind] ?? 0) + n })
+        for (const item of m.member.items) this.pool.items.push({ ...item, readied: false })
       }
     }
     if (outcome === 'lost') this.ui.print('THE PARTY HAS FALLEN.', true)
@@ -617,20 +650,7 @@ export class GameSession {
     this.ui.battleEnd()
     battle.combat.finish()
 
-    if (outcome !== 'fled') outcome = party.some((c) => c.member.character.status === 'okay') ? 'won' : 'lost'
-    if (outcome === 'won') {
-      const experience = battle.combat.experience()
-      const standing = this.roster.active
-      if (experience > 0 && standing.length > 0) {
-        const each = Math.floor(experience / standing.length)
-        for (const member of standing) member.character.experience += each
-        this.ui.print(`EACH SURVIVOR GAINS ${each} EXPERIENCE.`, true)
-      }
-    }
-    if (outcome === 'lost') this.ui.print('THE PARTY HAS FALLEN.', true)
-    this.ui.party(this.roster.members, this.roster.selected)
-    if (outcome === 'won') await this.takeTreasure()
-    return outcome
+    return this.reckon(battle.combat, outcome)
   }
 
   private async names(): Promise<string[]> {
@@ -687,7 +707,7 @@ export class GameSession {
   async createParty(): Promise<Member[]> {
     const { ALIGNMENTS, CLASSES_BY_RACE, createCharacter, qualifies, rollStats } = await import('./create.js')
     const { CLASSES, RACES } = await import('../formats/character.js')
-    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const random = this.random
     const types = await this.types()
     const members: Member[] = []
     while (members.length < 6) {
@@ -883,7 +903,7 @@ export class GameSession {
     const onto = this.roster.members[target]
     if (!onto) return
     forget(member.character, spell.id)
-    const { lines } = cast(spell, member.character, [onto.character], (max) => Math.floor(Math.random() * (max + 1)))
+    const { lines } = cast(spell, member.character, [onto.character], this.random)
     this.ui.print(lines.join('\n'), true)
     this.ui.party(this.roster.members, this.roster.selected)
   }
@@ -929,7 +949,7 @@ export class GameSession {
 
   /** A round's casting: any caster with something ready may use it before blows fall. */
   private async castInCombat(combat: Combat): Promise<string[]> {
-    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const random = this.random
     const casters = combat.party.filter((c) => c.member.character.status === 'okay' && !combat.acted.has(c.member.character) && ready(c.member.character).length > 0)
     if (casters.length === 0) return ['NOBODY HAS A SPELL READY.']
     const who = await this.ui.menu('WHO CASTS?', [...casters.map((c) => c.label), 'NOBODY'], 'vertical')
@@ -1087,6 +1107,7 @@ export class GameSession {
   private host(): EclHost {
     const ui = this.ui
     return {
+      random: (max) => this.random(max),
       print: (text, clear) => ui.print(text, clear),
       newLine: () => ui.newLine(),
       menu: (prompt, items, layout) => ui.menu(prompt, items, layout),
@@ -1174,7 +1195,7 @@ export class GameSession {
         }
       },
       damage: (spec) => {
-        const lines = this.roster.applyDamage(spec, (max) => Math.floor(Math.random() * (max + 1)))
+        const lines = this.roster.applyDamage(spec, this.random)
         for (const line of lines) ui.print(`\n${line}`, false)
         ui.party(this.roster.members, this.roster.selected)
       },
@@ -1190,7 +1211,7 @@ export class GameSession {
       },
       rob: (everyone, keepPercent, itemChance) => {
         const victims = everyone ? this.roster.members : [this.roster.current ?? this.roster.members[0]].filter((m): m is Member => m !== undefined)
-        for (const line of this.roster.rob(victims, keepPercent, itemChance, (max) => Math.floor(Math.random() * (max + 1)))) ui.print(`\n${line}`, false)
+        for (const line of this.roster.rob(victims, keepPercent, itemChance, this.random)) ui.print(`\n${line}`, false)
         ui.party(this.roster.members, this.roster.selected)
       },
       spellHolder: (id) => this.roster.spellHolder(id),
@@ -1228,7 +1249,7 @@ export class GameSession {
 
   /** Something from a pack: potions and wands, in or out of a fight. */
   usableItems(member: Member): { index: number; label: string; use: (targets: Character[], combat?: Combat) => string[] }[] {
-    const random = (max: number) => Math.floor(Math.random() * (max + 1))
+    const random = this.random
     const names = this.itemNames
     const out: { index: number; label: string; use: (targets: Character[], combat?: Combat) => string[] }[] = []
     member.items.forEach((item, index) => {
