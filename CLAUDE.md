@@ -77,14 +77,17 @@ one server-side, or check a `.DAX` into git is the wrong change.
   answer from the party, clerics turn undead (T in a fight), potions and wands are used
   (U in a fight, USE at camp), T outdoors travels to any area the wilderness script
   names, and PROGRAM 8 shows the closing pictures.
+- **Scrolls** — a Magic User or Clerical Scroll carries up to three spells in its
+  affect bytes; a caster of its class reads one (USE, at camp or in a fight) at
+  sixth level or their own, and a magic-user can SCRIBE one into the book at camp.
 - **DOS saves** — camp's EXPORT writes SAVGAMB.DAT and CHRDATB1–6 in the original's
   formats, with the bytes this program does not model carried through from the read.
 
 Not here yet: the overland map the wilderness scripts count squares on (T's travel
 menu stands in for it; the three wilderness scripts are sixteen-by-thirty-two regions
 handed across their edges, the terrain read by the engine's own CALLs 0xC018 and
-0xC01B, and no data file holds it), monsters' special attacks as data rather than by
-name, and scrolls.
+0xC01B, and no data file holds it) and monsters' special attacks as data rather than by
+name.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. `scripts/playthrough.ts` plays
 the game for thousands of steps with a seeded party — menus, fights, camp, training —
