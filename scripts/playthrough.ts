@@ -42,6 +42,8 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+let stepNow = 0
+let restTries = 0
 let noCampUntil = 0
 let rests = 0
 let lockedDoor = false
@@ -275,7 +277,7 @@ let buying: { index: number; wants: string[] } | undefined
 function shopper(): { index: number; wants: string[] } | undefined {
   for (const [index, m] of session.roster.members.entries()) {
     const cls = m.character.class
-    if (!carries(m, SLOT_WEAPON)) return { index, wants: WEAPON_FOR[cls] ?? DEFAULT_WEAPONS }
+    if (!carries(m, SLOT_WEAPON) && goldOf(m) >= 8) return { index, wants: WEAPON_FOR[cls] ?? DEFAULT_WEAPONS }
     const armour = ARMOUR_FOR[cls] ?? DEFAULT_ARMOUR
     if (armour.length > 0 && !carries(m, SLOT_ARMOUR) && goldOf(m) >= 5) return { index, wants: armour }
   }
@@ -315,7 +317,10 @@ const SCHOOL_OF: Record<string, number> = { cleric: 12, 'magic-user': 13, fighte
 const EXITS = new Set([26])
 const TRAINING_COST = 1000
 
+let noTrainingUntil = 0
+let hallSince = 0
 function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
+  if (stepNow < noTrainingUntil) return undefined
   const name = mapName(library.game.id, session.scriptId)
   const where = name === 'Civilized Area, New Phlan' ? 'city' : session.scriptId === 11 ? 'hall' : undefined
   if (!where) return undefined
@@ -431,6 +436,7 @@ let checkpoint: ReturnType<typeof session.snapshot> | undefined
 let questCheckpoint: { phase: Phase; target: number; laps: number; rewards: number; anteroom: boolean; wrong: number; log: string[] } | undefined
 
 for (let step = 0; step < STEPS; step++) {
+  stepNow = step
   if (session.scriptId !== lastScript) {
     lastScript = session.scriptId
     areas.set(lastScript, (areas.get(lastScript) ?? 0) + 1)
@@ -510,7 +516,7 @@ for (let step = 0; step < STEPS; step++) {
     }
     // A rolled party starts with nothing but its coins: the arms shop first, then the Slums.
     if (quest.phase === 'outfit' && !session.busy) {
-      if (!shopper()) { quest.phase = 'slums'; console.log(`step ${step}: OUTFITTED; TO THE SLUMS`); await teleport((await library.levelById(20, 2))!); continue }
+      if (!shopper() || step > 80) { quest.phase = 'slums'; console.log(`step ${step}: OUTFITTED; TO THE SLUMS`); await teleport((await library.levelById(20, 2))!); continue }
       if (session.scriptId !== 0) { await teleport((await library.levelById(0, 3))!); continue }
       if (session.map) { const routed = routeTo(session.map, session.party, [22], step); if (routed) { await go(routed, step); continue } }
     }
@@ -558,7 +564,17 @@ for (let step = 0; step < STEPS; step++) {
         quest.visited.add(`${where}:${[...unvisited][0]}`)
         continue
       }
-      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && !(session.scriptId === 11 && wantsTraining()) && !session.busy) { await teleport((await library.levelById(0, 3))!); continue }
+      // The hall's school doors go quiet after a visit: forty steps inside without a
+      // level is enough, and the halls are left alone for a while.
+      if (session.scriptId === 11 && wantsTraining()) hallSince++; else hallSince = 0
+      if (hallSince > 40) { hallSince = 0; noTrainingUntil = step + 300; console.log(`step ${step}: THE HALL HAS NOTHING TO TEACH TODAY`) }
+      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && !(session.scriptId === 11 && wantsTraining()) && !session.busy) {
+        // Hurt: a night here first, where the watch does not roust the camp, up to a few tries.
+        const hurtNow = session.roster.members.some((m) => m.character.status === 'okay' && m.character.hpCurrent < m.character.hpMax / 2)
+        if (hurtNow && restTries < 4) { restTries++; wantRest = true; try { await withTimeout(session.camp(), 20_000, `camp at step ${step}`) } catch (e) { errors.push(String(e)) } wantRest = false; continue }
+        restTries = 0
+        await teleport((await library.levelById(0, 3))!); continue
+      }
       if (quest.phase === 'collect' && session.scriptId === 0 && session.map && !session.busy && !wantsTraining()) {
         const routed = routeTo(session.map, session.party, [27], step)
         if (routed) { await go(routed, step); continue }
