@@ -369,7 +369,9 @@ export class GameSession {
       const levels = character.prepared.reduce((n, id) => n + (spellById(id)?.level ?? 1), 0)
       if (character.prepared.length > character.memorised.length) hours = Math.max(hours, 4 + Math.ceil(levels / 4))
     }
-    return Math.max(1, Math.min(hours, 24 * 14))
+    // Nobody hurt and nothing to memorise: a night's sleep, which is how the party
+    // waits for the town's doors to open in the morning.
+    return Math.max(hours > 0 ? 1 : 8, Math.min(hours, 24 * 14))
   }
 
   private async rest(): Promise<boolean> {

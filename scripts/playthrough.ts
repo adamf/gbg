@@ -83,6 +83,8 @@ const ui: SessionUi = {
     if (text.includes('EACH SURVIVOR GAINS')) wins++
     if (text.includes('THE PARTY HAS FALLEN')) losses++
     if (text.includes('THE PARTY RESTS')) rests++
+    // A locked door is the hour, not the square: rest until it opens, and hold no grudge against the square.
+    if (text.includes('THE DOOR IS LOCKED')) { lockedDoor = true; wantTimePass = true }
     if (text.includes('IS NOW A LEVEL')) trained++
     if (text.includes('THE SHOPKEEPER PAYS')) sold++
     if (text.includes('WINS THE BOUT') || text.includes('YIELDS')) dueled = true
@@ -120,7 +122,7 @@ const ui: SessionUi = {
       return trainTries === 1 ? 0 : find('LEAVE')
     }
     trainTries = 0
-    if (prompt?.startsWith('CAMP')) return wantRest && !prompt.includes('EVERYONE IS WELL') ? Math.max(0, find('REST')) : find('LEAVE')
+    if (prompt?.startsWith('CAMP')) return (wantRest && !prompt.includes('EVERYONE IS WELL')) || wantTimePass ? Math.max(0, find('REST')) : find('LEAVE')
     if (find('QUICK FIGHT') >= 0) { fights++; return find('QUICK FIGHT') }
     if (quest && find('GO') >= 0 && find('FIGHT') >= 0 && labels.length === 2) return find('GO')
     if (quest && find('SURRENDER') >= 0 && find('FIGHT') >= 0) return find('FIGHT')
@@ -310,7 +312,8 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   const after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
   // Only a step the map allows counts as a bounce; walking into a wall is the bot's own doing.
   const open = command === 'forward' && session.map !== undefined && canWalk(session.map, before.split(':')[1]!.split(',').map(Number)[0]!, before.split(':')[1]!.split(',').map(Number)[1]!, session.party.facing)
-  bounces = open && after === before ? bounces + 1 : 0
+  bounces = open && after === before && !lockedDoor ? bounces + 1 : 0
+  lockedDoor = false
   if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
 }
 
@@ -372,6 +375,8 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
 const started = Date.now()
 let noCampUntil = 0
 let rests = 0
+let lockedDoor = false
+let wantTimePass = false
 let checkpoint: ReturnType<typeof session.snapshot> | undefined
 /** The quest's own state at the checkpoint: a reload takes the memory back, so the bot's view of it goes back too. */
 let questCheckpoint: { phase: Phase; target: number; laps: number; rewards: number; anteroom: boolean; wrong: number; log: string[] } | undefined
@@ -422,12 +427,13 @@ for (let step = 0; step < STEPS; step++) {
   const noSpells = members.some((m) => m.character.prepared.length > 0 && m.character.memorised.length === 0)
   // A camp that was broken up before anyone rested — the council guard, the city
   // watch — is not tried again on the spot; the party walks on first.
-  if ((hurt || noSpells) && (quest || step % 5 === 0) && step >= noCampUntil) {
+  if ((hurt || noSpells || wantTimePass) && (quest || step % 5 === 0) && step >= noCampUntil) {
     wantRest = true
     const restsBefore = rests
     if (process.env.PLAY_DEBUG) console.log(`camp at step ${step}`)
     try { await withTimeout(session.camp(), 20_000, `camp at step ${step}`) } catch (e) { errors.push(String(e instanceof Error ? e.message : e)) }
     wantRest = false
+    wantTimePass = false
     if (rests === restsBefore) noCampUntil = step + 30
   }
   const before = `${session.party.row},${session.party.col},${session.scriptId}`
@@ -563,6 +569,7 @@ for (let step = 0; step < STEPS; step++) {
     }
     if (quest.phase === 'city' && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [27], step)
+      if (process.env.PLAY_DEBUG && step % 10 === 0) console.log(`city route ${routed ?? 'none'} from ${session.party.row},${session.party.col} ${session.party.facing}; target ${target ? `${target.row},${target.col}` : '-'}; deadly ${[...deadlyHere()].join(' ')}`)
       if (routed) { await go(routed, step); continue }
     }
     if ((quest.phase === 'hall' || quest.phase === 'hall2') && session.scriptId !== 8 && !session.busy) {
