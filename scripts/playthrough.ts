@@ -103,7 +103,17 @@ const ui: SessionUi = {
     const labels = items.map((i) => i.toUpperCase())
     const find = (word: string) => labels.findIndex((l) => l.includes(word))
     if (find('PRESS') >= 0) return find('PRESS')
-    if (labels.length === 2 && find('YES') === 0 && /TRAIN|DUEL/.test(texts[texts.length - 1] ?? '')) { trainTries = 0; return 0 }
+    // Rolling a party: six of any race, first dice kept, any class, sex and alignment.
+    if (prompt?.includes('ADD SOMEONE')) return prompt.startsWith('6') ? labels.length - 1 : random(labels.length - 2)
+    if (find('KEEP THESE') >= 0) return find('KEEP THESE')
+    if (labels.length === 2 && find('YES') === 0 && /TRAIN|DUEL/.test(texts[texts.length - 1] ?? '')) {
+      // A school door on the way: yes only if it teaches somebody who is ready.
+      const said = texts.slice(-3).join(' ')
+      const school = /CLERICS/.test(said) ? 0x02 : /MAGIC USERS/.test(said) ? 0x01 : /FIGHTERS/.test(said) ? 0x08 : /THIEVES/.test(said) ? 0x04 : 0x7f
+      if (school !== 0x7f && !session.roster.members.some((m) => readyToTrain(m.character, school).length > 0)) return 1
+      trainTries = 0
+      return 0
+    }
     if (prompt === 'TRAIN:') {
       // Train the first candidate once; if the hall asks again the last one could not pay.
       trainTries++
@@ -160,6 +170,7 @@ const ui: SessionUi = {
   inputString: async (maxLength) => {
     // Sokal Keep's undead want the journal's words: seven letters is SAMOSUD or
     // SHESTNI, three is LUX. A wrong word switches the guess.
+    if (/NAME\?/.test(texts[texts.length - 1] ?? '')) return `BOT ${session.roster.members.length + 1}`
     if (!quest) return 'BOT'
     if (maxLength === 3) return 'LUX'
     // The keep's script keeps which of the two words is current at 0x4A26.
@@ -221,11 +232,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 
 const library = new GameLibrary(await directorySource(folder))
 const templates = await library.itemTemplates()
-const saved = await library.savedGame('A')
+// PLAY_PARTY=J starts from the other shipped party; PLAY_PARTY=roll rolls six of its own.
+const saved = await library.savedGame(process.env.PLAY_PARTY === 'J' ? 'J' : 'A')
 if (!saved) throw new Error('no SAVGAMA.DAT')
 const session = new GameSession(library, ui)
 session.random = random
-await session.resume(saved)
+await session.resume(saved, process.env.PLAY_PARTY === 'roll' ? await session.createParty() : undefined)
 if (process.env.PLAY_RICH) {
   // A party with the experience and the gold to train, dropped in the city, to
   // exercise the halls at once.
@@ -296,7 +308,9 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   if (command === 'forward') lastStep = { from: before, to: target }
   try { await withTimeout(session.move(command), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
   const after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
-  bounces = command === 'forward' && after === before ? bounces + 1 : 0
+  // Only a step the map allows counts as a bounce; walking into a wall is the bot's own doing.
+  const open = command === 'forward' && session.map !== undefined && canWalk(session.map, before.split(':')[1]!.split(',').map(Number)[0]!, before.split(':')[1]!.split(',').map(Number)[1]!, session.party.facing)
+  bounces = open && after === before ? bounces + 1 : 0
   if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
 }
 
@@ -477,7 +491,8 @@ for (let step = 0; step < STEPS; step++) {
       }
     }
     if ((quest.phase === 'dock' || quest.phase === 'pier') && session.scriptId === 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
-    if (quest.phase === 'dock' && quest.log.some((l) => /CATCH THE BOAT|ONLY BOAT OUT/.test(l))) { quest.phase = 'pier'; console.log(`step ${step}: THE HARBOUR MASTER HAS SPOKEN`) }
+    // Only what he said this time: his line from an earlier walk past is still in the log.
+    if (quest.phase === 'dock' && quest.log.some((l) => /^dock: .*(CATCH THE BOAT|ONLY BOAT OUT)/.test(l))) { quest.phase = 'pier'; console.log(`step ${step}: THE HARBOUR MASTER HAS SPOKEN`) }
     // Somebody has the experience and the party the fee: back to town to train, then
     // back to where the work was (the boat and the walk stand in for by teleport).
     const trainable = () => session.roster.members.some((m) => readyToTrain(m.character, 0x7f).length > 0) && session.roster.members.reduce((n, m) => n + goldOf(m), 0) >= TRAINING_COST
@@ -507,11 +522,15 @@ for (let step = 0; step < STEPS; step++) {
         try { await withTimeout(session.move(cmd), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
         continue
       }
-      const routed = routeTo(session.map, session.party, [3], step)
+      // The dock sign's square, not the edge squares that share its event byte.
+      const routed = routeTo(session.map, session.party, new Set(['2,11']), step)
+      if (process.env.PLAY_DEBUG && step % 20 === 0) console.log(`dock route ${routed ?? 'none'} from ${session.party.row},${session.party.col}; target ${target ? `${target.row},${target.col}` : '-'}; deadly ${[...deadlyHere()].join(' ')}`)
       if (routed) { await go(routed, step); continue }
     }
     if (quest.phase === 'pier' && session.scriptId === 0 && session.map && !session.busy) {
-      const routed = routeTo(session.map, session.party, [1], step)
+      // The pier itself, not any square that shares its event byte.
+      const routed = routeTo(session.map, session.party, new Set(['1,15']), step)
+      if (process.env.PLAY_DEBUG) console.log(`pier route ${routed ?? 'none'} from ${session.party.row},${session.party.col} ${session.party.facing}; target ${target ? `${target.row},${target.col}` : '-'}; deadly ${[...deadlyHere()].join(' ')}`)
       if (routed) { await go(routed, step); continue }
     }
     if ((quest.phase === 'city2') && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
