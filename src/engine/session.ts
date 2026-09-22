@@ -383,11 +383,21 @@ export class GameSession {
       slept++
       this.advanceTime(60)
       if ((hour + 1) % period === 0 && chance > 0 && this.random(99) < chance) {
+        // The nights already slept still count before whatever wandered in arrives.
+        this.heal(slept)
         this.ui.print('THE PARTY IS DISTURBED!', true)
         await this.runEntry(this.program!.entryPoints.campInterrupted)
         return true
       }
     }
+    const days = this.heal(slept)
+    this.ui.print(`THE PARTY RESTS ${days > 0 ? `${days} DAY${days === 1 ? '' : 'S'}` : `${slept} HOUR${slept === 1 ? '' : 'S'}`}. SPELLS ARE MEMORISED.`, true)
+    this.ui.party(this.roster.members, this.roster.selected)
+    return false
+  }
+
+  /** What a rest of so many hours does: the downed come round, a point a day, spells back. Returns the days. */
+  private heal(slept: number): number {
     const days = Math.floor(slept / 24)
     for (const { character } of this.roster.members) {
       if (character.status === 'unconscious' || character.status === 'dying') {
@@ -396,11 +406,9 @@ export class GameSession {
         character.hpCurrent = Math.max(0, character.hpCurrent)
       }
       if (character.status === 'okay') character.hpCurrent = Math.min(character.hpMax, character.hpCurrent + days)
-      refresh(character)
+      if (slept >= 4) refresh(character)
     }
-    this.ui.print(`THE PARTY RESTS ${days > 0 ? `${days} DAY${days === 1 ? '' : 'S'}` : `${slept} HOUR${slept === 1 ? '' : 'S'}`}. SPELLS ARE MEMORISED.`, true)
-    this.ui.party(this.roster.members, this.roster.selected)
-    return false
+    return days
   }
 
   /** Outdoors: the original showed the map from above and let the script do the walking. */

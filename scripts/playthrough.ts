@@ -11,6 +11,8 @@ import { EIGHT_STEPS } from '../src/engine/battle.js'
 import { canWalk, cellAt, DIRECTIONS, step as stepOf, type Direction, type GeoMap } from '../src/formats/geo.js'
 import { readyToTrain } from '../src/engine/training.js'
 import { goldOf, worth } from '../src/engine/treasure.js'
+import { ready } from '../src/engine/equipment.js'
+import { SLOT_ARMOUR, SLOT_SHIELD, SLOT_WEAPON } from '../src/formats/items.js'
 import { mapName } from '../src/formats/detect.js'
 import { directorySource } from '../src/cli/node-source.js'
 import { GameLibrary } from '../src/formats/library.js'
@@ -39,6 +41,11 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+let noCampUntil = 0
+let rests = 0
+let lockedDoor = false
+let named = 0
+let wantTimePass = false
 
 let trained = 0
 let lastStatus = ''
@@ -52,7 +59,7 @@ let lastStatus = ''
  * it cannot finish in three laps is given up. When somebody has the experience and
  * the party the fee it detours to town to train. Prints every text along the way.
  */
-type Phase = 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 'sail' | 'city2' | 'hall2' | 'area' | 'collect' | 'train' | 'done'
+type Phase = 'outfit' | 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 'sail' | 'city2' | 'hall2' | 'area' | 'collect' | 'train' | 'done'
 /**
  * The clerk's other commissions, each an area to clear and the flag its script sets
  * to 254 when it is. The walk there is a harness shortcut; the area is played.
@@ -66,13 +73,20 @@ const TARGETS = [
   { name: 'Stojanow Gate', script: 9, area: 2, flag: 0x4ab9 },
   { name: 'Map 10', script: 10, area: 4, flag: 0x4ab1 },
 ]
-const quest = process.env.PLAY_QUEST ? { phase: 'slums' as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
+const quest = process.env.PLAY_QUEST ? { phase: (process.env.PLAY_PARTY === 'roll' ? 'outfit' : 'slums') as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
-const sellable = () => session.roster.members.some((m) => m.items.some((i) => !i.readied))
+/** Spare: not readied, and not the only weapon, armour or shield the member has. */
+const spare = (m: { items: { readied: boolean; type: number }[] }, i: { readied: boolean; type: number }) => {
+  if (i.readied) return false
+  const slot = itemTypes[i.type]?.slot
+  if (slot !== SLOT_WEAPON && slot !== SLOT_ARMOUR && slot !== SLOT_SHIELD) return true
+  return m.items.some((o) => o !== i && itemTypes[o.type]?.slot === slot)
+}
+const sellable = () => session.roster.members.some((m) => m.items.some((i) => spare(m, i)))
 /** What the shops would pay for everything not readied. */
-const lootWorth = () => session.roster.members.reduce((n, m) => n + m.items.filter((i) => !i.readied).reduce((k, i) => k + Math.floor(worth(i, templates) / 2), 0), 0)
+const lootWorth = () => session.roster.members.reduce((n, m) => n + m.items.filter((i) => spare(m, i)).reduce((k, i) => k + Math.floor(worth(i, templates) / 2), 0), 0)
 let dueled = false
 let reloads = 0
 
@@ -160,9 +174,19 @@ const ui: SessionUi = {
       if (dead && purse >= 1000) return find('RAISE')
       return session.roster.members.some((m) => m.character.hpCurrent < m.character.hpMax) && purse > 20 ? find('HEAL') : find('LEAVE')
     }
+    if (prompt === 'THE SHOP.' && (buying = shopper()) && find('BUY') >= 0 && (menuSeen.get(key) ?? 0) < 12) return find('BUY')
+    if (prompt === 'FOR SALE:') {
+      const gold = buying ? goldOf(session.roster.members[buying.index]!) : 0
+      for (const want of buying?.wants ?? []) {
+        const at = items.findIndex((i) => i.startsWith(`${want} —`) && parseInt(i.split('— ')[1] ?? '', 10) <= gold)
+        if (at >= 0) return at
+      }
+      buying = undefined
+      return labels.length - 1
+    }
     if (prompt === 'THE SHOP.') return sellable() ? find('SELL') : session.roster.members.some((m) => (m.character.money[5] ?? 0) + (m.character.money[6] ?? 0) > 0) ? find('APPRAISE') : find('LEAVE')
     if (prompt === 'WHOSE?') return session.roster.members.findIndex((m) => (m.character.money[5] ?? 0) + (m.character.money[6] ?? 0) > 0)
-    if (prompt === 'SELL WHAT?') { const at = session.roster.members[seller]?.items.findIndex((i) => !i.readied) ?? -1; return at >= 0 ? at : labels.length - 1 }
+    if (prompt === 'SELL WHAT?') { const m = session.roster.members[seller]; const at = m?.items.findIndex((i) => spare(m, i)) ?? -1; return at >= 0 ? at : labels.length - 1 }
     // Leave small menus alone the first few times; after that try the other answers,
     // or a door that puts the party back outside is entered forever.
     if (find('LEAVE') >= 0 && labels.length <= 3 && find('NORTH') < 0 && (menuSeen.get(key) ?? 0) <= 3) return find('LEAVE')
@@ -172,7 +196,7 @@ const ui: SessionUi = {
   inputString: async (maxLength) => {
     // Sokal Keep's undead want the journal's words: seven letters is SAMOSUD or
     // SHESTNI, three is LUX. A wrong word switches the guess.
-    if (/NAME\?/.test(texts[texts.length - 1] ?? '')) return `BOT ${session.roster.members.length + 1}`
+    if (/NAME\?/.test(texts[texts.length - 1] ?? '')) return `BOT ${++named}`
     if (!quest) return 'BOT'
     if (maxLength === 3) return 'LUX'
     // The keep's script keeps which of the two words is current at 0x4A26.
@@ -215,7 +239,8 @@ const ui: SessionUi = {
   battleEnd: () => {},
   party: () => {},
   who: async (prompt, members) => {
-    if (prompt === 'WHO SELLS?') { seller = members.findIndex((m) => m.items.some((i) => !i.readied)); return Math.max(0, seller) }
+    if (prompt === 'WHO SELLS?') { seller = members.findIndex((m) => m.items.some((i) => spare(m, i))); return Math.max(0, seller) }
+    if (prompt === 'WHO BUYS IT?') return buying?.index ?? 0
     if (prompt === 'WHO TAKES IT?') return members.reduce((best, m, i) => (m.items.length < members[best]!.items.length ? i : best), 0)
     return random(Math.max(0, members.length - 1))
   },
@@ -234,6 +259,27 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 
 const library = new GameLibrary(await directorySource(folder))
 const templates = await library.itemTemplates()
+const itemTypes = await library.itemTypes()
+/** Whether a member has something of a slot readied — a rolled party starts with nothing. */
+const hasReadied = (m: { items: { readied: boolean; type: number }[] }, slot: number) => m.items.some((i) => i.readied && itemTypes[i.type]?.slot === slot)
+/** Carried at all, readied or not: bought things are readied at the next step, not in the shop. */
+const carries = (m: { items: { readied: boolean; type: number }[] }, slot: number) => m.items.some((i) => itemTypes[i.type]?.slot === slot)
+/** What a class fights with, cheapest first, by the names the shop prints. */
+const WEAPON_FOR: Record<number, string[]> = { 0: ['Mace', 'Flail', 'Quarter Staff'], 5: ['Dagger', 'Quarter Staff'], 6: ['Short Sword', 'Dagger'] }
+const ARMOUR_FOR: Record<number, string[]> = { 5: [], 6: ['Leather Armor'], 0: ['Chain Mail', 'Scale Mail', 'Ring Mail', 'Studded Leather Armor', 'Leather Armor'] }
+const DEFAULT_WEAPONS = ['Long Sword', 'Broad Sword', 'Short Sword', 'Mace', 'Quarter Staff']
+const DEFAULT_ARMOUR = ['Chain Mail', 'Scale Mail', 'Ring Mail', 'Studded Leather Armor', 'Leather Armor']
+/** The member the bot is buying for, and what: set at the shop's door. */
+let buying: { index: number; wants: string[] } | undefined
+function shopper(): { index: number; wants: string[] } | undefined {
+  for (const [index, m] of session.roster.members.entries()) {
+    const cls = m.character.class
+    if (!carries(m, SLOT_WEAPON)) return { index, wants: WEAPON_FOR[cls] ?? DEFAULT_WEAPONS }
+    const armour = ARMOUR_FOR[cls] ?? DEFAULT_ARMOUR
+    if (armour.length > 0 && !carries(m, SLOT_ARMOUR) && goldOf(m) >= 5) return { index, wants: armour }
+  }
+  return undefined
+}
 // PLAY_PARTY=J starts from the other shipped party; PLAY_PARTY=roll rolls six of its own.
 const saved = await library.savedGame(process.env.PLAY_PARTY === 'J' ? 'J' : 'A')
 if (!saved) throw new Error('no SAVGAMA.DAT')
@@ -244,7 +290,7 @@ if (process.env.PLAY_RICH) {
   // A party with the experience and the gold to train, dropped in the city, to
   // exercise the halls at once.
   for (const m of session.roster.members) { m.character.experience = 20_000; m.character.money[3] = 2000 }
-  await session.enterLevel((await library.levelById(0, 3))!)
+  await teleport((await library.levelById(0, 3))!)
 }
 console.log(`${library.game.title}: ${session.roster.members.length} in the party, ${STEPS} steps, seed ${seedArg ?? 1}`)
 
@@ -296,6 +342,11 @@ function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
 }
 
 let bounces = 0
+/** The harness's shortcut between areas; the last step is forgotten so a wipe on arrival is charged to the arrival. */
+async function teleport(ref: Awaited<ReturnType<typeof library.levelById>>): Promise<void> {
+  lastStep = undefined
+  await session.enterLevel(ref!)
+}
 /** The last quest step's squares: where the party stood and where it tried to go. A wipe is charged to the second. */
 let lastStep: { from: string; to: string } | undefined
 /**
@@ -373,10 +424,6 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
   return undefined
 }
 const started = Date.now()
-let noCampUntil = 0
-let rests = 0
-let lockedDoor = false
-let wantTimePass = false
 let checkpoint: ReturnType<typeof session.snapshot> | undefined
 /** The quest's own state at the checkpoint: a reload takes the memory back, so the bot's view of it goes back too. */
 let questCheckpoint: { phase: Phase; target: number; laps: number; rewards: number; anteroom: boolean; wrong: number; log: string[] } | undefined
@@ -388,6 +435,14 @@ for (let step = 0; step < STEPS; step++) {
   }
   const members = session.roster.members
   const standing = members.filter((m) => m.character.status === 'okay')
+  // Anything bought or picked up that fills an empty hand or back is readied.
+  for (const m of members) {
+    for (const slot of [SLOT_WEAPON, SLOT_ARMOUR]) {
+      if (hasReadied(m, slot)) continue
+      const at = m.items.findIndex((i) => !i.readied && itemTypes[i.type]?.slot === slot && (slot !== SLOT_ARMOUR || (ARMOUR_FOR[m.character.class] ?? DEFAULT_ARMOUR).length > 0))
+      if (at >= 0) ready(m.character, m.items, at, itemTypes)
+    }
+  }
   if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step}: at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}`)
   if (standing.length === 0) {
     deaths++
@@ -397,22 +452,25 @@ for (let step = 0; step < STEPS; step++) {
       // the square that did it — a building with thirty guards is not a commission.
       // A second wipe on the same square marks it: one may be a wandering pack, two is the building's own fight.
       // Charged to the square the party stepped into, not where the script moved it before the fight.
-      if (quest && session.map && lastStep) {
-        const at = lastStep.to
+      if (quest && session.map) {
+        const at = lastStep?.to ?? `${session.scriptId}/${session.map.id}:${session.party.row},${session.party.col}`
         quest.wipes.set(at, (quest.wipes.get(at) ?? 0) + 1)
         if (quest.wipes.get(at)! >= 2) quest.deadly.add(at)
+        // Wiped on arrival twice — the area's own welcome is beyond the party: the area is given up.
+        if (!lastStep && quest.wipes.get(at)! >= 2 && quest.phase === 'area') { quest.laps = 3; console.log(`step ${step}: WIPED ON ARRIVAL TWICE AT ${at}`) }
         if (process.env.PLAY_DEBUG) console.log(`step ${step}: wiped at ${at} (${quest.wipes.get(at)} times)`)
       }
       reloads++
       if (process.env.PLAY_DEBUG) console.log(`step ${step}: WIPED (${members.map((m) => `${m.character.name} ${m.character.status} ${m.character.hpCurrent}`).join(', ')}); reloading`)
       await session.load(checkpoint)
-      if (quest && questCheckpoint) Object.assign(quest, { ...questCheckpoint, log: [...questCheckpoint.log], visited: new Set<string>() })
+      if (quest && questCheckpoint) { Object.assign(quest, { ...questCheckpoint, log: [...questCheckpoint.log], visited: new Set<string>() }); if (process.env.PLAY_DEBUG) console.log(`step ${step}: restored phase ${quest.phase} target ${quest.target} laps ${quest.laps}`) }
       for (const m of session.roster.members) { m.character.hpCurrent = m.character.hpMax }
       continue
     }
     for (const m of members) { m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
   }
   // Saved the way Gold Box players save: often, whenever everyone is on their feet.
+  if (process.env.PLAY_DEBUG && step % 25 === 0 && standing.length !== members.length) console.log(`step ${step}: no checkpoint: ${members.filter((m) => m.character.status !== 'okay').map((m) => `${m.character.name} ${m.character.status}`).join(', ')}`)
   if (step % 25 === 0 && standing.length === members.length && !session.busy) {
     checkpoint = session.snapshot()
     if (quest) questCheckpoint = { phase: quest.phase, target: quest.target, laps: quest.laps, rewards: quest.rewards, anteroom: quest.anteroom, wrong: quest.wrong, log: [...quest.log] }
@@ -443,11 +501,17 @@ for (let step = 0; step < STEPS; step++) {
     if (quest.phase === 'slums' && cleared) { quest.phase = 'city'; console.log(`step ${step}: THE SLUMS ARE CLEARED (kills counted ${mem().read(0x4a80)})`) }
     if (quest.phase === 'slums' && session.scriptId !== 20 && !session.busy) {
       // Strayed out of the block: back to its gate.
-      await session.enterLevel((await library.levelById(20, 2))!)
+      await teleport((await library.levelById(20, 2))!)
       continue
     }
+    // A rolled party starts with nothing but its coins: the arms shop first, then the Slums.
+    if (quest.phase === 'outfit' && !session.busy) {
+      if (!shopper()) { quest.phase = 'slums'; console.log(`step ${step}: OUTFITTED; TO THE SLUMS`); await teleport((await library.levelById(20, 2))!); continue }
+      if (session.scriptId !== 0) { await teleport((await library.levelById(0, 3))!); continue }
+      if (session.map) { const routed = routeTo(session.map, session.party, [22], step); if (routed) { await go(routed, step); continue } }
+    }
     if (quest.phase === 'city' && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) {
-      await session.enterLevel((await library.levelById(0, 3))!)
+      await teleport((await library.levelById(0, 3))!)
       continue
     }
     if (quest.phase === 'city' && session.scriptId === 8) { quest.phase = 'hall'; console.log(`step ${step}: IN THE CITY HALL`) }
@@ -471,7 +535,7 @@ for (let step = 0; step < STEPS; step++) {
         console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`)
         continue
       }
-      if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) { await session.enterLevel((await library.levelById(target.script, target.area))!); continue }
+      if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) { await teleport((await library.levelById(target.script, target.area))!); continue }
       if (quest.phase === 'area' && session.map && !session.busy) {
         // Mendor's books turn up only while searching the stacks; searching anywhere
         // else is slow going and wakes more wandering monsters.
@@ -490,13 +554,13 @@ for (let step = 0; step < STEPS; step++) {
         quest.visited.add(`${where}:${[...unvisited][0]}`)
         continue
       }
-      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && !(session.scriptId === 11 && wantsTraining()) && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && !(session.scriptId === 11 && wantsTraining()) && !session.busy) { await teleport((await library.levelById(0, 3))!); continue }
       if (quest.phase === 'collect' && session.scriptId === 0 && session.map && !session.busy && !wantsTraining()) {
         const routed = routeTo(session.map, session.party, [27], step)
         if (routed) { await go(routed, step); continue }
       }
     }
-    if ((quest.phase === 'dock' || quest.phase === 'pier') && session.scriptId === 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+    if ((quest.phase === 'dock' || quest.phase === 'pier') && session.scriptId === 8 && !session.busy) { await teleport((await library.levelById(0, 3))!); continue }
     // Only what he said this time: his line from an earlier walk past is still in the log.
     if (quest.phase === 'dock' && quest.log.some((l) => /^dock: .*(CATCH THE BOAT|ONLY BOAT OUT)/.test(l))) { quest.phase = 'pier'; console.log(`step ${step}: THE HARBOUR MASTER HAS SPOKEN`) }
     // Somebody has the experience and the party the fee: back to town to train, then
@@ -505,18 +569,18 @@ for (let step = 0; step < STEPS; step++) {
     if ((quest.phase === 'sokal' || quest.phase === 'area') && trainable() && !session.busy) {
       quest.detour = quest.phase; quest.phase = 'train'
       console.log(`step ${step}: TO TOWN TO TRAIN (${session.roster.members.filter((m) => readyToTrain(m.character, 0x7f).length > 0).map((m) => m.character.name).join(', ')})`)
-      await session.enterLevel((await library.levelById(0, 3))!)
+      await teleport((await library.levelById(0, 3))!)
       continue
     }
     if (quest.phase === 'train' && !session.busy && (session.scriptId === 0 || session.scriptId === 11) && !wantsTraining()) {
       const back = quest.detour ?? 'area'
       quest.phase = back; quest.detour = undefined
       console.log(`step ${step}: TRAINED; BACK TO ${back === 'sokal' ? 'SOKAL KEEP' : TARGETS[quest.target]?.name ?? 'the area'}`)
-      if (back === 'sokal') await session.enterLevel((await library.levelById(21, 4))!)
-      else if (TARGETS[quest.target]) await session.enterLevel((await library.levelById(TARGETS[quest.target]!.script, TARGETS[quest.target]!.area))!)
+      if (back === 'sokal') await teleport((await library.levelById(21, 4))!)
+      else if (TARGETS[quest.target]) await teleport((await library.levelById(TARGETS[quest.target]!.script, TARGETS[quest.target]!.area))!)
       continue
     }
-    if (quest.phase === 'train' && !session.busy && session.scriptId !== 0 && session.scriptId !== 11) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+    if (quest.phase === 'train' && !session.busy && session.scriptId !== 0 && session.scriptId !== 11) { await teleport((await library.levelById(0, 3))!); continue }
     if (quest.phase === 'pier' && session.scriptId === 21) { quest.phase = 'sokal'; console.log(`step ${step}: AT SOKAL KEEP`) }
     if (quest.phase === 'sokal' && mem().read(0x4aa7) >= 254) { quest.phase = 'sail'; console.log(`step ${step}: SOKAL KEEP IS CLEARED`) }
     if (quest.phase === 'sail' && session.scriptId === 0) { quest.phase = 'city2'; quest.anteroom = false; console.log(`step ${step}: BACK IN PHLAN`) }
@@ -539,7 +603,7 @@ for (let step = 0; step < STEPS; step++) {
       if (process.env.PLAY_DEBUG) console.log(`pier route ${routed ?? 'none'} from ${session.party.row},${session.party.col} ${session.party.facing}; target ${target ? `${target.row},${target.col}` : '-'}; deadly ${[...deadlyHere()].join(' ')}`)
       if (routed) { await go(routed, step); continue }
     }
-    if ((quest.phase === 'city2') && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+    if ((quest.phase === 'city2') && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) { await teleport((await library.levelById(0, 3))!); continue }
     if (quest.phase === 'city2' && session.scriptId === 0 && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [27], step)
       if (routed) { await go(routed, step); continue }
@@ -574,7 +638,7 @@ for (let step = 0; step < STEPS; step++) {
     }
     if ((quest.phase === 'hall' || quest.phase === 'hall2') && session.scriptId !== 8 && !session.busy) {
       // Thrown out, or reloaded into the street: back to the hall's door.
-      if (session.scriptId !== 0) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+      if (session.scriptId !== 0) { await teleport((await library.levelById(0, 3))!); continue }
       const routed = session.map ? routeTo(session.map, session.party, [27], step) : undefined
       if (routed) { await go(routed, step); continue }
     }

@@ -221,7 +221,7 @@ export function readItems(data: Uint8Array): Item[] {
       cursed: u8(data, at + 0x36) !== 0,
       weight: i16(data, at + 0x37),
       count: u8(data, at + 0x39),
-      value: i16(data, at + 0x3a),
+      value: u16(data, at + 0x3a), // unsigned: the Diamond Necklace is 50000
       affects: [u8(data, at + 0x3c), u8(data, at + 0x3d), u8(data, at + 0x3e)],
       raw: [...data.subarray(at, at + ITEM_RECORD_SIZE)],
     })
