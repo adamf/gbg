@@ -12,6 +12,7 @@ import { canWalk, cellAt, DIRECTIONS, step as stepOf, type Direction, type GeoMa
 import { readyToTrain } from '../src/engine/training.js'
 import { goldOf, worth } from '../src/engine/treasure.js'
 import { ready } from '../src/engine/equipment.js'
+import { autoPrepare, canCast } from '../src/engine/casting.js'
 import { SLOT_ARMOUR, SLOT_SHIELD, SLOT_WEAPON } from '../src/formats/items.js'
 import { mapName } from '../src/formats/detect.js'
 import { directorySource } from '../src/cli/node-source.js'
@@ -363,7 +364,8 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   const after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
   // Only a step the map allows counts as a bounce; walking into a wall is the bot's own doing.
   const open = command === 'forward' && session.map !== undefined && canWalk(session.map, before.split(':')[1]!.split(',').map(Number)[0]!, before.split(':')[1]!.split(',').map(Number)[1]!, session.party.facing)
-  bounces = open && after === before && !lockedDoor ? bounces + 1 : 0
+  // A turn between two refused steps does not clear the count: a door that turns the party round refuses it three times all the same.
+  bounces = open && after === before && !lockedDoor ? bounces + 1 : after !== before ? 0 : bounces
   lockedDoor = false
   if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
 }
@@ -435,15 +437,17 @@ for (let step = 0; step < STEPS; step++) {
   }
   const members = session.roster.members
   const standing = members.filter((m) => m.character.status === 'okay')
-  // Anything bought or picked up that fills an empty hand or back is readied.
+  // Anything bought or picked up that fills an empty hand or back is readied, and a
+  // caster with nothing chosen for the night picks the usual: what MEMORISE would.
   for (const m of members) {
+    if (canCast(m.character) && m.character.prepared.length === 0) autoPrepare(m.character)
     for (const slot of [SLOT_WEAPON, SLOT_ARMOUR]) {
       if (hasReadied(m, slot)) continue
       const at = m.items.findIndex((i) => !i.readied && itemTypes[i.type]?.slot === slot && (slot !== SLOT_ARMOUR || (ARMOUR_FOR[m.character.class] ?? DEFAULT_ARMOUR).length > 0))
       if (at >= 0) ready(m.character, m.items, at, itemTypes)
     }
   }
-  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step}: at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}`)
+  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step}: at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}${quest ? `; ${quest.phase} laps ${quest.laps} visited ${quest.visited.size} deadly ${quest.deadly.size}` : ''}`)
   if (standing.length === 0) {
     deaths++
     if (quest && reloads >= 200) { console.log(`step ${step}: OUT OF RELOADS`); break }
@@ -674,7 +678,7 @@ for (let step = 0; step < STEPS; step++) {
       quest.visited.add(here)
       const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`) && !quest.deadly.has(`${session.scriptId}/${session.map.id}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
       const routed = unvisited.size > 0 ? routeTo(session.map, session.party, unvisited, step) : undefined
-      if (process.env.PLAY_DEBUG && step < 60) console.log(`quest step ${step}: at ${here} ${session.party.facing} -> ${routed ?? 'no route'} (target ${target ? `${target.row},${target.col}` : '-'}; ${unvisited.size} cells left)`)
+      if (process.env.PLAY_DEBUG && (step < 60 || (step > 1500 && step < 1530))) console.log(`quest step ${step}: at ${here} ${session.party.facing} -> ${routed ?? 'no route'} (target ${target ? `${target.row},${target.col}` : '-'}; ${unvisited.size} cells left: ${[...unvisited].slice(0, 6).join(' ')})`)
       if (routed) { await go(routed, step); continue }
       // No way there that keeps clear of the deadly squares: give the cell up rather
       // than wander, which walks into them.

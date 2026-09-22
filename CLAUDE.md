@@ -95,8 +95,9 @@ and reports what it saw and what hung; run a few seeds after touching the engine
 `PLAY_QUEST=1` makes it play the story instead of wandering: clear the Slums (every
 event square, every fight), collect from the clerk, take the harbour master's boat to
 Sokal Keep, answer its undead with the journal's words, clear it, sail home and collect
-again. It has done all of that on several seeds; that is how far the story is proven to
-run. The clerk's office is reached through her anteroom from the south. Script commands that need
+again, then the clerk's other areas one by one. It has done all of that on several seeds
+with the pre-made party and with one it rolled (`PLAY_PARTY=roll`, which buys its gear
+first); that is how far the story is proven to run. The clerk's office is reached through her anteroom from the south. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
