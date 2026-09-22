@@ -364,6 +364,7 @@ for (let step = 0; step < STEPS; step++) {
   }
   const members = session.roster.members
   const standing = members.filter((m) => m.character.status === 'okay')
+  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step}: at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}`)
   if (standing.length === 0) {
     deaths++
     if (quest && reloads >= 200) { console.log(`step ${step}: OUT OF RELOADS`); break }
@@ -608,6 +609,7 @@ for (let step = 0; step < STEPS; step++) {
   const after = `${session.party.row},${session.party.col},${session.scriptId}`
   if (process.env.PLAY_DEBUG && step < 60) console.log(`step ${step} ${command}: ${before} -> ${after} busy ${session.busy}`)
   stuck = after === before ? stuck + 1 : 0
+  if (process.env.PLAY_DEBUG && stuck > 0 && stuck % 50 === 0) console.log(`step ${step}: stuck ${stuck} at ${after} facing ${session.party.facing} after ${command}; busy ${session.busy}`)
   if (session.overhead && stuck > 12) {
     // Outdoors the map is a shortcut away; take one so the run keeps seeing new places.
     const options = await session.travelOptions()
