@@ -48,10 +48,23 @@ export function hits(attacker: Character, defender: Character, roll: number): bo
   return roll >= needed || roll === 20
 }
 
-export function rollDamage(attacker: Character, random: Random): number {
+/**
+ * The record's dice, unless they are not dice: a few shipped monsters (quicklings,
+ * bandits, a medusa) carry letters or nothing there, and then the blow is judged
+ * by hit dice the way the rules would.
+ */
+export function damageDice(attacker: Character): { dice: number; sides: number; bonus: number } {
   const { dice, sides, bonus } = attacker.attacks
+  const plausible = dice >= 1 && dice <= 20 && sides >= 1 && sides <= 30
+  if (plausible) return { dice, sides, bonus }
+  const hd = attacker.hitDice
+  return { dice: 1, sides: hd <= 2 ? 4 : hd <= 5 ? 6 : hd <= 8 ? 8 : 10, bonus: 0 }
+}
+
+export function rollDamage(attacker: Character, random: Random): number {
+  const { dice, sides, bonus } = damageDice(attacker)
   let total = bonus
-  for (let i = 0; i < Math.max(1, dice); i++) total += random(Math.max(1, sides) - 1) + 1
+  for (let i = 0; i < dice; i++) total += random(sides - 1) + 1
   return Math.max(1, total)
 }
 
@@ -89,12 +102,13 @@ export function saves(character: Character, index: number, random: Random): bool
 }
 
 /** What a monster is, by its name: the kinds the rules single out. */
-export function monsterKind(character: Character): 'troll' | 'ghoul' | 'poisoner' | 'drainer' | 'plain' {
+export function monsterKind(character: Character): 'troll' | 'ghoul' | 'poisoner' | 'drainer' | 'petrifier' | 'plain' {
   const name = character.name.toUpperCase()
   if (name.includes('TROLL')) return 'troll'
   if (/GHOUL|GHAST/.test(name)) return 'ghoul'
-  if (/SPIDER|CENTIPEDE|SNAKE|SCORPION|WYVERN|NAGA|ASSASSIN|COBRA|VIPER/.test(name)) return 'poisoner'
+  if (/SPIDER|CENTIPEDE|SNAKE|SCORPION|WYVERN|NAGA|ASSASSIN|COBRA|VIPER|DRIDER|THRI-KREEN/.test(name)) return 'poisoner'
   if (/WIGHT|WRAITH|SPECTRE|VAMPIRE/.test(name)) return 'drainer'
+  if (/MEDUSA|BASILISK/.test(name)) return 'petrifier'
   return 'plain'
 }
 

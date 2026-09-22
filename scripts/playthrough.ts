@@ -400,7 +400,7 @@ for (let step = 0; step < STEPS; step++) {
   }
   // A dead member would need a temple and the coins for it; the bot just raises them and counts it.
   for (const m of members) {
-    if (m.character.status === 'dead' && step % 50 === 0) { raises++; m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
+    if ((m.character.status === 'dead' || m.character.status === 'stoned') && step % 50 === 0) { raises++; m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
   }
   // On a quest the party rests whenever anyone is scratched or a spell is spent — the
   // Slums are lost by fighting worn down, not by fighting.

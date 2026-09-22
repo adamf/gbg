@@ -44,7 +44,8 @@ one server-side, or check a `.DAX` into git is the wrong change.
   with the manual's durations, on a registry of lasting effects the fight keeps —
   blessings and curses, shields and protections, haste and slow, silence, strength
   and enfeeblement, proofing against fire and missiles, the cures for poison and
-  drain and paralysis. Sleepers and the held are auto-hit for double.
+  drain, paralysis and a medusa's or basilisk's gaze, which turns the failed save to
+  stone until the temple raises them. Sleepers and the held are auto-hit for double.
 - **Training** — the halls' class masks and PROGRAM 0 open a training menu; a level
   costs the original's thousand gold and brings a hit die, a better to-hit and slots.
 - **Treasure and shops** — what TREASURE leaves on the ground can be shared and taken,

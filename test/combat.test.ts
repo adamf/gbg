@@ -60,6 +60,27 @@ describe('to-hit and damage', () => {
     expect(rollDamage(a, () => 5)).toBe(13)
     expect(rollDamage(a, () => 0)).toBe(3)
   })
+
+  it('judges a blow by hit dice when the record carries no dice', () => {
+    // Quicklings ship with 65d68 in the damage bytes and a medusa with 0d0.
+    const letters = fighter('Q', 10, 10, 20, [65, 68, 0])
+    letters.hitDice = 1
+    expect(rollDamage(letters, () => 3)).toBe(4)
+    const nothing = fighter('M', 10, 10, 20, [0, 0, 0])
+    nothing.hitDice = 6
+    expect(rollDamage(nothing, () => 7)).toBe(8)
+  })
+
+  it('knows the monsters the rules single out by name', async () => {
+    const { monsterKind } = await import('../src/engine/combat.js')
+    const named = (name: string) => monsterKind(fighter(name, 10, 10, 20, [1, 6, 0]))
+    expect(named('MEDUSA')).toBe('petrifier')
+    expect(named('BASILISK')).toBe('petrifier')
+    expect(named('DRIDER')).toBe('poisoner')
+    expect(named('THRI-KREEN')).toBe('poisoner')
+    expect(named('WIGHT')).toBe('drainer')
+    expect(named('ORC LEADER')).toBe('plain')
+  })
 })
 
 describe('a fight', () => {

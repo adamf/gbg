@@ -472,6 +472,13 @@ export class Battle {
         victim.hpCurrent = 0
         victim.poisoned = true
         return [`${target.combatant.label} IS POISONED AND DIES!`]
+      case 'petrifier':
+        // The gaze: a save against petrification or the victim is stone until a temple sees to it.
+        if (saves(victim, 1, this.random)) return []
+        victim.status = 'stoned'
+        victim.statusByte = 7
+        victim.hpCurrent = 0
+        return [`${target.combatant.label} IS TURNED TO STONE!`]
       case 'drainer': {
         const index = victim.levels.findIndex((l) => l > 0)
         if (index < 0) return []

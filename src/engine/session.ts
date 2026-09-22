@@ -1153,7 +1153,8 @@ export class GameSession {
     for (;;) {
       const hurt = this.roster.members.filter((m) => m.character.hpCurrent < m.character.hpMax || m.character.status !== 'okay')
       const gold = this.roster.members.reduce((n, m) => n + goldOf(m), 0)
-      const dead = this.roster.members.filter((m) => m.character.status === 'dead')
+      // The stoned are raised the same way: the temple's stone to flesh is the same thousand.
+      const dead = this.roster.members.filter((m) => m.character.status === 'dead' || m.character.status === 'stoned')
       const choice = await this.ui.menu(`THE TEMPLE. YOU HAVE ${gold} GOLD.`, ['HEAL THE PARTY', `RAISE DEAD — ${RAISE_DEAD_COST} GOLD`, 'LEAVE'], 'vertical')
       if (choice === 2) return
       if (choice === 1) {
