@@ -128,6 +128,8 @@ export class GameSession {
   private running = false
   /** Set by a duel CALL: the next fight is this member alone. */
   private champion: Member | undefined
+  /** The monsters of the last fight, for the result words the scripts read. */
+  private lastMonsters: Combatant[] = []
   /** Set by the arena master: the next COMBAT is a sparring bout, not to the death. */
   private sparring = false
   /** What TREASURE left on the ground, or a shop's shelf. */
@@ -608,7 +610,11 @@ export class GameSession {
     const outcome = await this.fightLoaded(loaded, random)
     // The scripts test the result three ways: won is below 1, fled is exactly 129,
     // and a lost fight is above 128 — so a wipe must not land on 128 itself.
-    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : outcome === 'fled' ? 0x81 : 0xff)
+    // A rout — the last monsters ran rather than fell — is 1: the city watch's script
+    // checks for exactly that, and the kill counters (`< 1`) leave it out.
+    const routed = outcome === 'won' && this.lastMonsters.some((m) => m.member.character.status === 'running')
+    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? (routed ? 1 : 0) : outcome === 'fled' ? 0x81 : 0xff)
+    this.memory.write(POOL_ADDRESSES.monstersKilled, Math.min(255, this.lastMonsters.filter((m) => m.member.character.status === 'dead').length))
     return outcome
   }
 
@@ -701,6 +707,7 @@ export class GameSession {
    * and what they carried — coins and items — lies on the ground for the taking.
    */
   private async reckon(combat: Combat, outcome: CombatOutcome): Promise<CombatOutcome> {
+    this.lastMonsters = combat.monsters
     if (outcome !== 'fled') {
       const okay = combat.party.some((c) => c.member.character.status === 'okay')
       const ran = combat.party.some((c) => c.member.character.status === 'running')

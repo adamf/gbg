@@ -353,7 +353,7 @@ coab's 3D loop (`ovr003`) runs the script's per-step entry *before* the party mo
 from the square it stands on and facing the way it means to go; the entry may take the
 party elsewhere or refuse the move by writing 255 to `0x6DC9`. Only then does the party
 
-The combat result at 0x6DC7 is tested three ways by the scripts — `< 1` (won), `= 129` (the party fled) and `> 128` (the party is down) — so a won fight writes 0, a flight 129 and a wipe 255; 128 itself would read as a win to the `> 128` test.
+The combat result at 0x6DC7 is tested three ways by the scripts — `< 1` (won), `= 129` (the party fled) and `> 128` (the party is down) — so a won fight writes 0, a rout (the last monsters ran) 1 — the city watch's script tests for exactly that — a flight 129 and a wipe 255; 128 itself would read as a win to the `> 128` test.
 step, and the square it lands on runs the search entry. Getting this backwards made
 the city clerk's office refuse everyone: its per-step code guards her south and east
 doors against a party without a commission, and a party that had just stepped in from
