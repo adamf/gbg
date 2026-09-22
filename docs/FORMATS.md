@@ -449,7 +449,7 @@ where Curse has 100. Offsets checked against every character Pool of Radiance sh
 
 An inventory is 63-byte item records: a name at 0, type at 0x2E, plus at 0x32, readied
 at 0x34, cursed at 0x36, weight (tenths of a pound, `i16`) at 0x37, count at 0x39,
-value (`i16`) at 0x3A, three affects at 0x3C.
+value (`i16`) at 0x3A, three affects at 0x3C. On a scroll (types 61 and 62) the affects are the spell ids written on it and the plus byte is their count less one; the name's middle word (entries 210–212, *With 1 Spell* to *With 3 Spells*) says the same.
 
 ### Item names — `src/formats/items.ts`
 
