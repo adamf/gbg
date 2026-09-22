@@ -77,6 +77,7 @@ const ui: SessionUi = {
   print: (text) => {
     if (text.includes('EACH SURVIVOR GAINS')) wins++
     if (text.includes('THE PARTY HAS FALLEN')) losses++
+    if (text.includes('THE PARTY RESTS')) rests++
     if (text.includes('IS NOW A LEVEL')) trained++
     if (text.includes('THE SHOPKEEPER PAYS')) sold++
     if (text.includes('WINS THE BOUT') || text.includes('YIELDS')) dueled = true
@@ -125,7 +126,8 @@ const ui: SessionUi = {
     }
     // Nobody forces their way past temple guards or stays for the city watch on a commission.
     if (quest && find('FORCE') >= 0 && find('LEAVE') >= 0) return find('LEAVE')
-    if (quest && find('STAY') >= 0 && find('RUN') >= 0 && labels.length === 2) return find('RUN')
+    // STAY is always the fight: the city watch's GO or RUN is the other answer.
+    if (quest && find('STAY') >= 0 && labels.length === 2) return 1 - find('STAY')
     if (quest && find('ATTACK') >= 0 && labels.length <= 3) return find('TALK') >= 0 ? find('TALK') : find('ATTACK')
     if (quest && find('YES') === 0 && labels.length === 2) {
       const last = texts.slice(-3).join(' ')
@@ -349,6 +351,8 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
   return undefined
 }
 const started = Date.now()
+let noCampUntil = 0
+let rests = 0
 let checkpoint: ReturnType<typeof session.snapshot> | undefined
 /** The quest's own state at the checkpoint: a reload takes the memory back, so the bot's view of it goes back too. */
 let questCheckpoint: { phase: Phase; target: number; laps: number; rewards: number; anteroom: boolean; wrong: number; log: string[] } | undefined
@@ -396,11 +400,15 @@ for (let step = 0; step < STEPS; step++) {
   // Slums are lost by fighting worn down, not by fighting.
   const hurt = members.some((m) => (quest ? m.character.hpCurrent < m.character.hpMax : m.character.hpCurrent < m.character.hpMax / 2) || m.character.status !== 'okay')
   const noSpells = members.some((m) => m.character.prepared.length > 0 && m.character.memorised.length === 0)
-  if ((hurt || noSpells) && (quest || step % 5 === 0)) {
+  // A camp that was broken up before anyone rested — the council guard, the city
+  // watch — is not tried again on the spot; the party walks on first.
+  if ((hurt || noSpells) && (quest || step % 5 === 0) && step >= noCampUntil) {
     wantRest = true
+    const restsBefore = rests
     if (process.env.PLAY_DEBUG) console.log(`camp at step ${step}`)
     try { await withTimeout(session.camp(), 20_000, `camp at step ${step}`) } catch (e) { errors.push(String(e instanceof Error ? e.message : e)) }
     wantRest = false
+    if (rests === restsBefore) noCampUntil = step + 30
   }
   const before = `${session.party.row},${session.party.col},${session.scriptId}`
   if (quest) {
@@ -453,7 +461,7 @@ for (let step = 0; step < STEPS; step++) {
         quest.visited.add(`${where}:${[...unvisited][0]}`)
         continue
       }
-      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && session.scriptId !== 11 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && !(session.scriptId === 11 && wantsTraining()) && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
       if (quest.phase === 'collect' && session.scriptId === 0 && session.map && !session.busy && !wantsTraining()) {
         const routed = routeTo(session.map, session.party, [27], step)
         if (routed) { await go(routed, step); continue }
