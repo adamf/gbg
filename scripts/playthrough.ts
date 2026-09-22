@@ -587,7 +587,7 @@ for (let step = 0; step < STEPS; step++) {
     console.log(`step ${step}: seeking the ${goal} in script ${session.scriptId}, ${routed ?? 'no route'} from ${session.party.row},${session.party.col} ${session.party.facing} walls ${JSON.stringify(cell?.walls)} doors ${JSON.stringify(cell?.doors)} event ${cell?.event}`)
   }
   const command = routed ?? (stuck > 6 ? (step % 2 === 0 ? 'turnRight' : 'forward') : commands[random(commands.length - 1)]!)
-  if (quest && routed) { await go(routed, step); continue }
+  if (quest) { await go(command === 'back' ? 'turnLeft' : command, step); continue }
   try {
     await withTimeout(session.move(command), 20_000, `step ${step} (${command})`)
   } catch (e) {
