@@ -43,9 +43,14 @@ let wantRest = false
 let trained = 0
 let lastStatus = ''
 /**
- * PLAY_QUEST: play the first commission instead of wandering — hunt in the Slums
- * until the block is cleared (global 0x4ABB reaches 254), walk to the city hall
- * (city event 27) and find the clerk. Prints every text along the way.
+ * PLAY_QUEST: play the commissions instead of wandering — hunt in the Slums until
+ * the block is cleared (global 0x4ABB reaches 254), walk to the city hall (city
+ * event 27) and find the clerk, take the boat to Sokal Keep, then the clerk's other
+ * areas in TARGETS, collecting from her between each. The party saves every 25
+ * steps and reloads after a wipe, as a Gold Box player does; a square it has wiped
+ * on twice, or that keeps throwing it back, is routed round from then on; an area
+ * it cannot finish in three laps is given up. When somebody has the experience and
+ * the party the fee it detours to town to train. Prints every text along the way.
  */
 type Phase = 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 'sail' | 'city2' | 'hall2' | 'area' | 'collect' | 'train' | 'done'
 /**

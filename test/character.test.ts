@@ -56,6 +56,13 @@ describe('character records', () => {
     expect(c.attacks).toEqual({ count: 0, dice: 1, sides: 6, bonus: 2 })
   })
 
+  it('reads a damage penalty as a signed byte', () => {
+    // An orc's 2d4−1 is stored with 255 in the bonus byte; unsigned it hit for 257.
+    const data = fighterRecord()
+    data[0x119] = 255
+    expect(readCharacter(data).attacks.bonus).toBe(-1)
+  })
+
   it('reads an inventory as fixed-size records', () => {
     const data = new Uint8Array(ITEM_RECORD_SIZE * 2)
     const put = (at: number, name: string) => {
