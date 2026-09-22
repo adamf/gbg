@@ -161,13 +161,23 @@ function drawMissile(g: CanvasRenderingContext2D, sprite: readonly Rgba[], id: n
 function frames(ms: number, draw: (t: number) => void): Promise<void> {
   return new Promise((resolve) => {
     const started = performance.now()
+    let done = false
+    const finish = (): void => {
+      if (done) return
+      done = true
+      draw(1)
+      resolve()
+    }
     const tick = (): void => {
+      if (done) return
       const t = Math.min(1, (performance.now() - started) / ms)
       draw(t)
       if (t < 1) requestAnimationFrame(tick)
-      else resolve()
+      else finish()
     }
     requestAnimationFrame(tick)
+    // A tab in the background gets no animation frames; the fight must not wait on one.
+    setTimeout(finish, ms + 50)
   })
 }
 
