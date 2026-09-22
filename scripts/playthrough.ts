@@ -66,7 +66,7 @@ const TARGETS = [
   { name: 'Stojanow Gate', script: 9, area: 2, flag: 0x4ab9 },
   { name: 'Map 10', script: 10, area: 4, flag: 0x4ab1 },
 ]
-const quest = process.env.PLAY_QUEST ? { phase: 'slums' as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
+const quest = process.env.PLAY_QUEST ? { phase: 'slums' as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
@@ -591,6 +591,21 @@ for (let step = 0; step < STEPS; step++) {
       if (process.env.PLAY_DEBUG && unvisited.size > 0 && step % 100 === 0) console.log(`quest step ${step}: no route from ${here} ${session.party.facing} to ${unvisited.size} cells; deadly ${[...quest.deadly].join(' ')}`)
       if (unvisited.size > 0) { quest.visited.add(`${session.scriptId}:${[...unvisited][0]}`); continue }
       quest.visited.clear()
+      quest.laps++
+      // Three laps with the block still uncleared: the fights left are the ones it wiped
+      // on, so try them once more with the party as it is now; after that, move on.
+      if (quest.laps >= 3) {
+        quest.laps = 0
+        quest.retries = (quest.retries ?? 0) + 1
+        if (quest.retries <= 2) {
+          for (const k of [...quest.deadly]) if (k.startsWith(`${session.scriptId}/`)) quest.deadly.delete(k)
+          quest.wipes.clear()
+          console.log(`step ${step}: THE SLUMS ARE NOT CLEARED (flag ${mem().read(0x4abb)}); TRYING THE DEADLY SQUARES AGAIN`)
+        } else {
+          quest.phase = 'area'; quest.target = 0; quest.rewards = 0
+          console.log(`step ${step}: THE SLUMS GIVEN UP (flag ${mem().read(0x4abb)}); NEXT ${TARGETS[0]!.name}`)
+        }
+      }
       continue
     }
   }
