@@ -40,3 +40,14 @@ describe('random loot', () => {
     expect(randomItems(1, templates, () => 69).length).toBe(0)
   })
 })
+
+describe('worth', () => {
+  it('falls back to the template when a monster item carries no value', async () => {
+    const { worth } = await import('../src/engine/treasure.js')
+    const shield = { ...item(50), value: 0 }
+    const templates = new Map([[50, { ...item(50), value: 10 }]])
+    expect(worth(shield, templates)).toBe(10)
+    expect(worth({ ...item(50), value: 4 }, templates)).toBe(4)
+    expect(worth(shield)).toBe(0)
+  })
+})

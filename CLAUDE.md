@@ -34,8 +34,8 @@ one server-side, or check a `.DAX` into git is the wrong change.
   original's combat map (`engine/arena.ts` is a port of the game's own builder: a
   50×25 grid of DUNGCOM pieces from the thirteen-by-five squares around the party,
   six-by-five patches sheared a column a row) with eight-way moves, turns by
-  initiative, blows, missiles, spells and monsters that close in, or resolved quickly
-  a round at a time,
+  initiative, blows, missiles, spells and monsters that close in, or played quickly by
+  the computer on the same grid,
   camping that heals and can be interrupted by the level's own encounter odds, a temple
   that heals for gold, and a save in the browser's storage with a Continue button.
 

@@ -86,10 +86,20 @@ export function buy(member: Member, item: Item): boolean {
   return true
 }
 
-export function sell(member: Member, index: number): number {
+/**
+ * What an item is worth: its own record's value, or, when a monster's gear was
+ * written with none, the shipped template's value for its type — a shield taken
+ * from a kobold is still a shield.
+ */
+export function worth(item: Item, templates?: ReadonlyMap<number, Item>): number {
+  if (item.value > 0) return item.value
+  return templates?.get(item.type)?.value ?? 0
+}
+
+export function sell(member: Member, index: number, templates?: ReadonlyMap<number, Item>): number {
   const [item] = member.items.splice(index, 1)
   if (!item) return 0
-  const price = Math.max(1, Math.floor(item.value / 2))
+  const price = Math.max(1, Math.floor(worth(item, templates) / 2))
   member.character.money[3] = (member.character.money[3] ?? 0) + price
   return price
 }

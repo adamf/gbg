@@ -26,7 +26,7 @@ import { Battle, type Fighter } from './battle.js'
 import { randomItems } from './loot.js'
 import { missileFor, SPRITE } from './sprites.js'
 import { refit } from './burden.js'
-import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool } from './treasure.js'
+import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool, worth } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell } from '../formats/spells.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
@@ -603,7 +603,9 @@ export class GameSession {
     if (loaded.length === 0) return this.ui.combat(groups)
     const random = this.random
     const outcome = await this.fightLoaded(loaded, random)
-    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : outcome === 'fled' ? 0x81 : 0x80)
+    // The scripts test the result three ways: won is below 1, fled is exactly 129,
+    // and a lost fight is above 128 — so a wipe must not land on 128 itself.
+    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : outcome === 'fled' ? 0x81 : 0xff)
     return outcome
   }
 
@@ -630,7 +632,7 @@ export class GameSession {
     if (member.character.status !== 'okay') { member.character.status = 'okay'; member.character.statusByte = 0 }
     this.ui.print(outcome === 'won' ? `${member.character.name} WINS THE BOUT.` : `${member.character.name} YIELDS.`, true)
     this.ui.party(this.roster.members, this.roster.selected)
-    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : 0x80)
+    this.memory.write(POOL_ADDRESSES.combatResult, outcome === 'won' ? 0 : 0xff)
     return outcome
   }
 
@@ -641,8 +643,11 @@ export class GameSession {
     const party: Combatant[] = fighters.map((member) => ({ member, label: member.character.name }))
     const monsters = labelMonsters(loaded)
 
+    // Both modes fight on the grid, as the original did: QUICK is the same battle
+    // with the computer playing the party. The abstract round-by-round fight is
+    // only for a session with no map to fight on.
     const mode = await this.ui.battleMode(monsters)
-    if (mode === 'tactical' && this.map) {
+    if (this.map) {
       for (const c of party) {
         c.icon = await this.library.partyIcon(c.member.character)
         c.actionIcon = await this.library.partyIcon(c.member.character, true)
@@ -653,7 +658,7 @@ export class GameSession {
         if (!icons.has(c.picture)) icons.set(c.picture, [await this.library.combatIcon(this.area, c.picture), await this.library.combatIcon(this.area, c.picture, true)])
         ;[c.icon, c.actionIcon] = icons.get(c.picture)!
       }
-      return this.tacticalFight(party, monsters, random)
+      return this.tacticalFight(party, monsters, random, mode === 'quick')
     }
 
     const combat = new Combat(party, monsters, random)
@@ -719,7 +724,7 @@ export class GameSession {
   }
 
   /** The fight on the grid: turns until one side is done, then the same reckoning. */
-  private async tacticalFight(party: Combatant[], monsters: Combatant[], random: (max: number) => number): Promise<CombatOutcome> {
+  private async tacticalFight(party: Combatant[], monsters: Combatant[], random: (max: number) => number, quick = false): Promise<CombatOutcome> {
     const battle = new Battle(this.map!, party, monsters, this.party, 1, random, this.overhead)
     battle.types = await this.types()
     const sprites = new Map<number, readonly Rgba[]>()
@@ -735,9 +740,10 @@ export class GameSession {
       }
       const fighter = battle.current
       if (!fighter) { battle.endTurn(); continue }
-      if (fighter.side === 'monster') {
-        const lines = battle.monsterTurn(fighter)
+      if (fighter.side === 'monster' || quick) {
+        const lines = fighter.side === 'monster' ? battle.monsterTurn(fighter) : battle.autoTurn(fighter)
         await this.ui.battleUpdate(battle, lines)
+        this.ui.party(this.roster.members, this.roster.selected)
         battle.endTurn()
         continue
       }
@@ -939,10 +945,11 @@ export class GameSession {
         const who = await this.ui.who('WHO SELLS?', this.roster.members)
         const member = this.roster.members[who]
         if (!member || member.items.length === 0) continue
-        const pick = await this.ui.menu('SELL WHAT?', [...member.items.map((item) => `${itemDisplayName(item, names)} — ${Math.max(1, Math.floor(item.value / 2))} GOLD`), 'NOTHING'], 'vertical')
+        const templates = await this.library.itemTemplates()
+        const pick = await this.ui.menu('SELL WHAT?', [...member.items.map((item) => `${itemDisplayName(item, names)} — ${Math.max(1, Math.floor(worth(item, templates) / 2))} GOLD`), 'NOTHING'], 'vertical')
         if (pick >= member.items.length) continue
         if (member.items[pick]?.readied) unready(member.character, member.items, pick, await this.types())
-        const price = sell(member, pick)
+        const price = sell(member, pick, templates)
         this.ui.print(`THE SHOPKEEPER PAYS ${price} GOLD.`, true)
       }
       this.ui.party(this.roster.members, this.roster.selected)

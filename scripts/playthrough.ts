@@ -10,7 +10,7 @@
 import { EIGHT_STEPS } from '../src/engine/battle.js'
 import { canWalk, cellAt, DIRECTIONS, step as stepOf, type Direction, type GeoMap } from '../src/formats/geo.js'
 import { readyToTrain } from '../src/engine/training.js'
-import { goldOf } from '../src/engine/treasure.js'
+import { goldOf, worth } from '../src/engine/treasure.js'
 import { mapName } from '../src/formats/detect.js'
 import { directorySource } from '../src/cli/node-source.js'
 import { GameLibrary } from '../src/formats/library.js'
@@ -47,12 +47,27 @@ let lastStatus = ''
  * until the block is cleared (global 0x4ABB reaches 254), walk to the city hall
  * (city event 27) and find the clerk. Prints every text along the way.
  */
-type Phase = 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 'sail' | 'city2' | 'hall2' | 'done'
-const quest = process.env.PLAY_QUEST ? { phase: 'slums' as Phase, log: [] as string[], started: 0, visited: new Set<string>(), wrong: 0, anteroom: false } : undefined
+type Phase = 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 'sail' | 'city2' | 'hall2' | 'area' | 'collect' | 'train' | 'done'
+/**
+ * The clerk's other commissions, each an area to clear and the flag its script sets
+ * to 254 when it is. The walk there is a harness shortcut; the area is played.
+ */
+const TARGETS = [
+  { name: "Kuto's Well", script: 29, area: 8, flag: 0x4aa6 },
+  { name: 'Podal Plaza', script: 18, area: 1, flag: 0x4ab0 },
+  { name: "Mendor's Library", script: 15, area: 2, flag: 0x4aaa },
+  { name: 'Kovel Mansion', script: 14, area: 3, flag: 0x4ab2 },
+  { name: 'Temple of Bane', script: 24, area: 1, flag: 0x4aa8 },
+  { name: 'Stojanow Gate', script: 9, area: 2, flag: 0x4ab9 },
+  { name: 'Map 10', script: 10, area: 4, flag: 0x4ab1 },
+]
+const quest = process.env.PLAY_QUEST ? { phase: 'slums' as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
 const sellable = () => session.roster.members.some((m) => m.items.some((i) => !i.readied))
+/** What the shops would pay for everything not readied. */
+const lootWorth = () => session.roster.members.reduce((n, m) => n + m.items.filter((i) => !i.readied).reduce((k, i) => k + Math.floor(worth(i, templates) / 2), 0), 0)
 let dueled = false
 let reloads = 0
 
@@ -69,7 +84,8 @@ const ui: SessionUi = {
     if (quest && text.includes('WRONG WORD')) quest.wrong++
     if (process.env.PLAY_TEXTS && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
     else if (process.env.PLAY_DEBUG && lastStatus.startsWith('in the') && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
-    if (text.trim()) texts.push(text.trim().slice(0, 80))
+    // The question is at the end of a long paragraph; keep the tail, not the head.
+    if (text.trim()) texts.push(text.trim().slice(-120))
   },
   newLine: () => {},
   menu: async (prompt, items) => {
@@ -91,10 +107,13 @@ const ui: SessionUi = {
     if (prompt?.startsWith('CAMP')) return wantRest && !prompt.includes('EVERYONE IS WELL') ? Math.max(0, find('REST')) : find('LEAVE')
     if (find('QUICK FIGHT') >= 0) { fights++; return find('QUICK FIGHT') }
     if (quest && find('GO') >= 0 && find('FIGHT') >= 0 && labels.length === 2) return find('GO')
+    if (quest && find('SURRENDER') >= 0 && find('FIGHT') >= 0) return find('FIGHT')
     if (find('FIGHT') >= 0 && find('RUN') >= 0) return find('FIGHT')
     if (find('COMBAT') >= 0 && find('WAIT') >= 0) {
       // In town on a quest the party talks its way past or leaves; it fights where the fights count.
       if (quest && (session.scriptId === 0 || session.scriptId === 8)) return find('PARLAY') >= 0 ? find('PARLAY') : find('FLEE')
+      // Sokal Keep's undead ask for the journal's word when spoken to, and leave on hearing it.
+      if (quest && find('PARLAY') >= 0 && /UNDEAD/.test(texts.slice(-2).join(' '))) return find('PARLAY')
       return quest ? find('COMBAT') : random(9) < 7 ? find('COMBAT') : find('FLEE')
     }
     if (find('SHARE') >= 0) return find('SHARE')
@@ -104,12 +123,15 @@ const ui: SessionUi = {
       const take = labels.findIndex((l) => l.startsWith('TAKE '))
       return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
     }
-    if (quest && find('ATTACK') >= 0 && labels.length <= 3) return find('ATTACK')
+    // Nobody forces their way past temple guards or stays for the city watch on a commission.
+    if (quest && find('FORCE') >= 0 && find('LEAVE') >= 0) return find('LEAVE')
+    if (quest && find('STAY') >= 0 && find('RUN') >= 0 && labels.length === 2) return find('RUN')
+    if (quest && find('ATTACK') >= 0 && labels.length <= 3) return find('TALK') >= 0 ? find('TALK') : find('ATTACK')
     if (quest && find('YES') === 0 && labels.length === 2) {
       const last = texts.slice(-3).join(' ')
       // No to the boat while the keep is unfinished, and never a wager or another round of dice.
       if (quest.phase === 'sokal' && /BOAT BACK/.test(last)) return 1
-      if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?/.test(last)) return 1
+      if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?|CLIMB UP|BREAK IN/.test(last)) return 1
       return 0
     }
     if (prompt?.startsWith('THE TEMPLE.')) {
@@ -133,7 +155,8 @@ const ui: SessionUi = {
     // SHESTNI, three is LUX. A wrong word switches the guess.
     if (!quest) return 'BOT'
     if (maxLength === 3) return 'LUX'
-    return quest.wrong % 2 === 0 ? 'SAMOSUD' : 'SHESTNI'
+    // The keep's script keeps which of the two words is current at 0x4A26.
+    return mem().read(0x4a26) === 255 ? 'SAMOSUD' : 'SHESTNI'
   },
   delay: async () => {},
   picture: () => {},
@@ -144,7 +167,7 @@ const ui: SessionUi = {
   battleMode: async () => { fights++; return process.env.PLAY_MODE === 'tactical' || (process.env.PLAY_MODE !== 'quick' && fights % 2 === 0) ? 'tactical' : 'quick' },
   battleArt: () => {},
   battleUpdate: async (battle, lines) => {
-    if (process.env.PLAY_DEBUG && battle.combat.round >= 44 && battle.combat.round <= 45) console.log(`  monsters: ${lines.join(' ') || 'nothing'}`)
+    if (process.env.PLAY_FIGHTS || (process.env.PLAY_DEBUG && battle.combat.round >= 44 && battle.combat.round <= 45)) console.log(`  monsters r${battle.combat.round}: ${lines.join(' ') || 'nothing'}`)
     if (process.env.PLAY_DEBUG && lines[0]?.includes('FOE')) {
       // The arena as a picture: floor, rock, and who stands where.
       for (let y = 0; y < battle.height; y++) {
@@ -176,7 +199,8 @@ const ui: SessionUi = {
     if (prompt === 'WHO TAKES IT?') return members.reduce((best, m, i) => (m.items.length < members[best]!.items.length ? i : best), 0)
     return random(Math.max(0, members.length - 1))
   },
-  parlay: async () => random(4),
+  // On a quest the party is polite: the haughty and abusive answers start fights it cannot win yet.
+  parlay: async () => (quest ? 3 : random(4)),
   saved: () => {},
   files: () => {},
   note: (message) => { notes.set(message, (notes.get(message) ?? 0) + 1) },
@@ -189,6 +213,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 }
 
 const library = new GameLibrary(await directorySource(folder))
+const templates = await library.itemTemplates()
 const saved = await library.savedGame('A')
 if (!saved) throw new Error('no SAVGAMA.DAT')
 const session = new GameSession(library, ui)
@@ -233,7 +258,8 @@ function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
   lastStatus = status
   if (ready.length === 0) return undefined
   // Short of the fee but carrying loot: the city's shops first.
-  if (purse < TRAINING_COST) return where === 'city' && sellable() ? 'shop' : undefined
+  // Short of the fee: the shops, if what the party carries would make it up; otherwise it is not worth the walk.
+  if (purse < TRAINING_COST) return where === 'city' && sellable() && purse + lootWorth() >= TRAINING_COST ? 'shop' : undefined
   // The party pools its gold on whoever is training, the way a player would.
   const payer = ready[0]!
   if (goldOf(payer) < TRAINING_COST) {
@@ -248,11 +274,37 @@ function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
   return where
 }
 
+let bounces = 0
+/** The last quest step's squares: where the party stood and where it tried to go. A wipe is charged to the second. */
+let lastStep: { from: string; to: string } | undefined
+/**
+ * One step of a quest walk. A square that keeps putting the party back where it
+ * was — temple guards, a locked door, a room that throws the party out — joins the
+ * deadly set after three tries, so the route goes round it.
+ */
+async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): Promise<void> {
+  const before = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+  const ahead = stepOf(session.party.facing)
+  const target = `${session.scriptId}/${session.map?.id}:${session.party.row + ahead.dRow},${session.party.col + ahead.dCol}`
+  if (command === 'forward') lastStep = { from: before, to: target }
+  try { await withTimeout(session.move(command), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
+  const after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+  bounces = command === 'forward' && after === before ? bounces + 1 : 0
+  if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
+}
+
+/** The squares of the current map the party has been wiped on, as row,col keys. */
+function deadlyHere(): ReadonlySet<string> {
+  if (!quest || !session.map) return new Set()
+  const prefix = `${session.scriptId}/${session.map.id}:`
+  return new Set([...quest.deadly].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)))
+}
+
 /** The cell the bot is walking to, kept until it gets there, so two doors cannot pull it back and forth. */
 let target: { row: number; col: number; events: string; until: number } | undefined
 
 /** The first command of a shortest walk to any cell with one of the events, or nothing. */
-function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[] | ReadonlySet<string>, step: number, avoid?: ReadonlySet<number>): 'forward' | 'turnLeft' | 'turnRight' | undefined {
+function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[] | ReadonlySet<string>, step: number, avoid?: ReadonlySet<number>, blocked: ReadonlySet<string> = deadlyHere()): 'forward' | 'turnLeft' | 'turnRight' | undefined {
   const key = (row: number, col: number) => `${row},${col}`
   const cells = events instanceof Set ? events : undefined
   const wanted = cells ? [...cells].join(';') : (events as readonly number[]).join(',')
@@ -264,7 +316,7 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
   while (queue.length > 0) {
     const here = queue.shift()!
     const cell = cellAt(map, here.row, here.col)
-    if (cell && isGoal(here.row, here.col, cell.event) && !(here.row === from.row && here.col === from.col)) {
+    if (cell && isGoal(here.row, here.col, cell.event) && !(here.row === from.row && here.col === from.col) && !blocked.has(key(here.row, here.col))) {
       if (!target) target = { row: here.row, col: here.col, events: wanted, until: step + 60 }
       // Walk back to the first step.
       let cursor = here
@@ -288,6 +340,8 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
       if (prev.has(key(row, col))) continue
       // Squares whose events throw the party out are not on the way to anywhere.
       if (avoid && avoid.has(cellAt(map, row, col)?.event ?? 0)) continue
+      // Nor are the squares the party has died on: not as a goal, not on the way.
+      if (blocked.has(key(row, col))) continue
       prev.set(key(row, col), { row: here.row, col: here.col, dir })
       queue.push({ row, col })
     }
@@ -296,6 +350,8 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
 }
 const started = Date.now()
 let checkpoint: ReturnType<typeof session.snapshot> | undefined
+/** The quest's own state at the checkpoint: a reload takes the memory back, so the bot's view of it goes back too. */
+let questCheckpoint: { phase: Phase; target: number; laps: number; rewards: number; anteroom: boolean; wrong: number; log: string[] } | undefined
 
 for (let step = 0; step < STEPS; step++) {
   if (session.scriptId !== lastScript) {
@@ -306,16 +362,32 @@ for (let step = 0; step < STEPS; step++) {
   const standing = members.filter((m) => m.character.status === 'okay')
   if (standing.length === 0) {
     deaths++
+    if (quest && reloads >= 200) { console.log(`step ${step}: OUT OF RELOADS`); break }
     if (checkpoint && reloads < 200) {
-      // What a player does after a wipe: reload the last save.
+      // What a player does after a wipe: reload the last save, and steer clear of
+      // the square that did it — a building with thirty guards is not a commission.
+      // A second wipe on the same square marks it: one may be a wandering pack, two is the building's own fight.
+      // Charged to the square the party stepped into, not where the script moved it before the fight.
+      if (quest && session.map && lastStep) {
+        const at = lastStep.to
+        quest.wipes.set(at, (quest.wipes.get(at) ?? 0) + 1)
+        if (quest.wipes.get(at)! >= 2) quest.deadly.add(at)
+        if (process.env.PLAY_DEBUG) console.log(`step ${step}: wiped at ${at} (${quest.wipes.get(at)} times)`)
+      }
       reloads++
+      if (process.env.PLAY_DEBUG) console.log(`step ${step}: WIPED (${members.map((m) => `${m.character.name} ${m.character.status} ${m.character.hpCurrent}`).join(', ')}); reloading`)
       await session.load(checkpoint)
+      if (quest && questCheckpoint) Object.assign(quest, { ...questCheckpoint, log: [...questCheckpoint.log], visited: new Set<string>() })
       for (const m of session.roster.members) { m.character.hpCurrent = m.character.hpMax }
       continue
     }
     for (const m of members) { m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
   }
-  if (step % 250 === 0 && standing.length === members.length && !session.busy) checkpoint = session.snapshot()
+  // Saved the way Gold Box players save: often, whenever everyone is on their feet.
+  if (step % 25 === 0 && standing.length === members.length && !session.busy) {
+    checkpoint = session.snapshot()
+    if (quest) questCheckpoint = { phase: quest.phase, target: quest.target, laps: quest.laps, rewards: quest.rewards, anteroom: quest.anteroom, wrong: quest.wrong, log: [...quest.log] }
+  }
   // A dead member would need a temple and the coins for it; the bot just raises them and counts it.
   for (const m of members) {
     if (m.character.status === 'dead' && step % 50 === 0) { raises++; m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
@@ -346,9 +418,67 @@ for (let step = 0; step < STEPS; step++) {
     }
     if (quest.phase === 'city' && session.scriptId === 8) { quest.phase = 'hall'; console.log(`step ${step}: IN THE CITY HALL`) }
     if (quest.phase === 'hall' && quest.log.some((l) => /HERE IS YOUR REWARD/.test(l))) { quest.phase = 'dock'; console.log(`step ${step}: THE CLERK HAS PAID; TO THE DOCK`) }
-    if (quest.phase === 'hall2' && quest.log.filter((l) => /HERE IS YOUR REWARD/.test(l)).length >= 2) { quest.phase = 'done'; console.log(`step ${step}: THE CLERK HAS PAID FOR SOKAL KEEP`); break }
+    if (quest.phase === 'hall2' && quest.log.filter((l) => /HERE IS YOUR REWARD/.test(l)).length >= 2) { quest.phase = 'area'; quest.rewards = 2; quest.visited.clear(); quest.laps = 0; console.log(`step ${step}: THE CLERK HAS PAID FOR SOKAL KEEP; NEXT ${TARGETS[0]!.name}`) }
+    if (quest.phase === 'area' || quest.phase === 'collect') {
+      const target = TARGETS[quest.target]
+      if (!target) { quest.phase = 'done'; console.log(`step ${step}: EVERY TARGET TRIED`); break }
+      if (quest.phase === 'area' && (mem().read(target.flag) >= 254 || quest.laps >= 3)) {
+        console.log(`step ${step}: ${target.name} ${mem().read(target.flag) >= 254 ? 'IS CLEARED' : 'GIVEN UP AFTER 3 LAPS'} (flag ${mem().read(target.flag)})`)
+        quest.phase = 'collect'; quest.anteroom = false
+      }
+      let paid = false
+      if (quest.phase === 'collect' && quest.log.filter((l) => /HERE IS YOUR REWARD/.test(l)).length > quest.rewards) {
+        quest.rewards = quest.log.filter((l) => /HERE IS YOUR REWARD/.test(l)).length
+        paid = true
+        console.log(`step ${step}: THE CLERK HAS PAID FOR ${target.name}`)
+      }
+      if (quest.phase === 'collect' && (paid || quest.log.slice(-40).some((l) => /THESE ARE ALL OF THE COMMISSIONS/.test(l)) && mem().read(target.flag) !== 254)) {
+        quest.target++; quest.visited.clear(); quest.laps = 0; quest.phase = 'area'
+        console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`)
+        continue
+      }
+      if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) { await session.enterLevel((await library.levelById(target.script, target.area))!); continue }
+      if (quest.phase === 'area' && session.map && !session.busy) {
+        // Keyed by map as well as script: Kuto's Well is two maps under one script.
+        const where = `${session.scriptId}/${session.map.id}`
+        quest.visited.add(`${where}:${session.party.row},${session.party.col}`)
+        // The square ahead counts as seen once the party tries to enter it: a room that
+        // throws the party out would otherwise be tried forever.
+        const ahead = stepOf(session.party.facing)
+        quest.visited.add(`${where}:${session.party.row + ahead.dRow},${session.party.col + ahead.dCol}`)
+        const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${where}:${c.row},${c.col}`) && !quest.deadly.has(`${where}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
+        if (unvisited.size === 0) { quest.visited.clear(); quest.laps++; continue }
+        const routed = routeTo(session.map, session.party, unvisited, step)
+        if (routed) { await go(routed, step); continue }
+        quest.visited.add(`${where}:${[...unvisited][0]}`)
+        continue
+      }
+      if (quest.phase === 'collect' && session.scriptId !== 0 && session.scriptId !== 8 && session.scriptId !== 11 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+      if (quest.phase === 'collect' && session.scriptId === 0 && session.map && !session.busy && !wantsTraining()) {
+        const routed = routeTo(session.map, session.party, [27], step)
+        if (routed) { await go(routed, step); continue }
+      }
+    }
     if ((quest.phase === 'dock' || quest.phase === 'pier') && session.scriptId === 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
     if (quest.phase === 'dock' && quest.log.some((l) => /CATCH THE BOAT|ONLY BOAT OUT/.test(l))) { quest.phase = 'pier'; console.log(`step ${step}: THE HARBOUR MASTER HAS SPOKEN`) }
+    // Somebody has the experience and the party the fee: back to town to train, then
+    // back to where the work was (the boat and the walk stand in for by teleport).
+    const trainable = () => session.roster.members.some((m) => readyToTrain(m.character, 0x7f).length > 0) && session.roster.members.reduce((n, m) => n + goldOf(m), 0) >= TRAINING_COST
+    if ((quest.phase === 'sokal' || quest.phase === 'area') && trainable() && !session.busy) {
+      quest.detour = quest.phase; quest.phase = 'train'
+      console.log(`step ${step}: TO TOWN TO TRAIN (${session.roster.members.filter((m) => readyToTrain(m.character, 0x7f).length > 0).map((m) => m.character.name).join(', ')})`)
+      await session.enterLevel((await library.levelById(0, 3))!)
+      continue
+    }
+    if (quest.phase === 'train' && !session.busy && (session.scriptId === 0 || session.scriptId === 11) && !wantsTraining()) {
+      const back = quest.detour ?? 'area'
+      quest.phase = back; quest.detour = undefined
+      console.log(`step ${step}: TRAINED; BACK TO ${back === 'sokal' ? 'SOKAL KEEP' : TARGETS[quest.target]?.name ?? 'the area'}`)
+      if (back === 'sokal') await session.enterLevel((await library.levelById(21, 4))!)
+      else if (TARGETS[quest.target]) await session.enterLevel((await library.levelById(TARGETS[quest.target]!.script, TARGETS[quest.target]!.area))!)
+      continue
+    }
+    if (quest.phase === 'train' && !session.busy && session.scriptId !== 0 && session.scriptId !== 11) { await session.enterLevel((await library.levelById(0, 3))!); continue }
     if (quest.phase === 'pier' && session.scriptId === 21) { quest.phase = 'sokal'; console.log(`step ${step}: AT SOKAL KEEP`) }
     if (quest.phase === 'sokal' && mem().read(0x4aa7) >= 254) { quest.phase = 'sail'; console.log(`step ${step}: SOKAL KEEP IS CLEARED`) }
     if (quest.phase === 'sail' && session.scriptId === 0) { quest.phase = 'city2'; quest.anteroom = false; console.log(`step ${step}: BACK IN PHLAN`) }
@@ -361,16 +491,16 @@ for (let step = 0; step < STEPS; step++) {
         continue
       }
       const routed = routeTo(session.map, session.party, [3], step)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
     if (quest.phase === 'pier' && session.scriptId === 0 && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [1], step)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
     if ((quest.phase === 'city2') && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
     if (quest.phase === 'city2' && session.scriptId === 0 && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [27], step)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
     if (quest.phase === 'sail' && session.scriptId === 21 && session.map && !session.busy) {
       // Off any open edge: the keep's script offers the boat back.
@@ -388,23 +518,24 @@ for (let step = 0; step < STEPS; step++) {
       }
       const edges = new Set(map.cells.filter((c) => outward(c)).map((c) => `${c.row},${c.col}`))
       const routed = routeTo(map, session.party, edges, step)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
+    if (quest.phase === 'area' && quest.log.length > 0 && session.scriptId === TARGETS[quest.target]?.script) { /* played above */ }
     if (quest.phase === 'sokal' && session.scriptId !== 21 && !session.busy) {
       // Fell off the keep (the boat prompt answered wrong): back in.
-      if (session.scriptId === 0) { const routed = session.map ? routeTo(session.map, session.party, [1], step) : undefined; if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue } }
+      if (session.scriptId === 0) { const routed = session.map ? routeTo(session.map, session.party, [1], step) : undefined; if (routed) { await go(routed, step); continue } }
     }
     if (quest.phase === 'city' && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [27], step)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
     if ((quest.phase === 'hall' || quest.phase === 'hall2') && session.scriptId !== 8 && !session.busy) {
       // Thrown out, or reloaded into the street: back to the hall's door.
       if (session.scriptId !== 0) { await session.enterLevel((await library.levelById(0, 3))!); continue }
       const routed = session.map ? routeTo(session.map, session.party, [27], step) : undefined
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
-    if ((quest.phase === 'hall' || quest.phase === 'hall2') && session.scriptId === 8 && session.map && !session.busy) {
+    if ((quest.phase === 'hall' || quest.phase === 'hall2' || quest.phase === 'collect') && session.scriptId === 8 && session.map && !session.busy) {
       // The clerk is the hall's event 29, and she only speaks after the party has
       // passed her anteroom, event 28; 26 is the way out.
       const here = cellAt(session.map, session.party.row, session.party.col)?.event
@@ -415,25 +546,35 @@ for (let step = 0; step < STEPS; step++) {
       if (!quest.anteroom) routed = routeTo(session.map, session.party, [28], step, EXITS)
       else if (session.party.row === 6 && session.party.col === 5) routed = session.party.facing === 'north' ? 'forward' : session.party.facing === 'east' ? 'turnLeft' : 'turnRight'
       else routed = routeTo(session.map, session.party, new Set(['6,5']), step, EXITS)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
     }
     if (quest.phase === 'sokal' && session.scriptId === 21 && session.map && !session.busy) {
       const here = `${session.scriptId}:${session.party.row},${session.party.col}`
       quest.visited.add(here)
-      const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
+      const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`) && !quest.deadly.has(`${session.scriptId}/${session.map.id}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
       const routed = unvisited.size > 0 ? routeTo(session.map, session.party, unvisited, step) : undefined
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
-      if (unvisited.size === 0) quest.visited.clear()
+      if (routed) { await go(routed, step); continue }
+      if (unvisited.size === 0) { quest.visited.clear(); quest.laps++ }
+      else quest.visited.add(`${session.scriptId}:${[...unvisited][0]}`)
+      // The keep's last fight is beyond a first-level party; the other commissions are not all.
+      if (quest.laps >= 3) { quest.phase = 'area'; quest.target = 0; quest.laps = 0; quest.rewards = quest.log.filter((l) => /HERE IS YOUR REWARD/.test(l)).length; console.log(`step ${step}: SOKAL KEEP GIVEN UP AFTER 3 LAPS; NEXT ${TARGETS[0]!.name}`) }
+      continue
     }
     if (quest.phase === 'slums' && session.map && !session.busy) {
       // The block's buildings hold the fights the wandering ones stop short of: walk
       // to every event square once, nearest first.
       const here = `${session.scriptId}:${session.party.row},${session.party.col}`
       quest.visited.add(here)
-      const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
+      const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`) && !quest.deadly.has(`${session.scriptId}/${session.map.id}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
       const routed = unvisited.size > 0 ? routeTo(session.map, session.party, unvisited, step) : undefined
       if (process.env.PLAY_DEBUG && step < 60) console.log(`quest step ${step}: at ${here} ${session.party.facing} -> ${routed ?? 'no route'} (target ${target ? `${target.row},${target.col}` : '-'}; ${unvisited.size} cells left)`)
-      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (routed) { await go(routed, step); continue }
+      // No way there that keeps clear of the deadly squares: give the cell up rather
+      // than wander, which walks into them.
+      if (process.env.PLAY_DEBUG && unvisited.size > 0 && step % 100 === 0) console.log(`quest step ${step}: no route from ${here} ${session.party.facing} to ${unvisited.size} cells; deadly ${[...quest.deadly].join(' ')}`)
+      if (unvisited.size > 0) { quest.visited.add(`${session.scriptId}:${[...unvisited][0]}`); continue }
+      quest.visited.clear()
+      continue
     }
   }
   const goal = wantsTraining()
@@ -446,6 +587,7 @@ for (let step = 0; step < STEPS; step++) {
     console.log(`step ${step}: seeking the ${goal} in script ${session.scriptId}, ${routed ?? 'no route'} from ${session.party.row},${session.party.col} ${session.party.facing} walls ${JSON.stringify(cell?.walls)} doors ${JSON.stringify(cell?.doors)} event ${cell?.event}`)
   }
   const command = routed ?? (stuck > 6 ? (step % 2 === 0 ? 'turnRight' : 'forward') : commands[random(commands.length - 1)]!)
+  if (quest && routed) { await go(routed, step); continue }
   try {
     await withTimeout(session.move(command), 20_000, `step ${step} (${command})`)
   } catch (e) {

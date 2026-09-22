@@ -352,6 +352,8 @@ set before a COMBAT with no monsters loaded mean the temple and the shop.
 coab's 3D loop (`ovr003`) runs the script's per-step entry *before* the party moves,
 from the square it stands on and facing the way it means to go; the entry may take the
 party elsewhere or refuse the move by writing 255 to `0x6DC9`. Only then does the party
+
+The combat result at 0x6DC7 is tested three ways by the scripts — `< 1` (won), `= 129` (the party fled) and `> 128` (the party is down) — so a won fight writes 0, a flight 129 and a wipe 255; 128 itself would read as a win to the `> 128` test.
 step, and the square it lands on runs the search entry. Getting this backwards made
 the city clerk's office refuse everyone: its per-step code guards her south and east
 doors against a party without a commission, and a party that had just stepped in from
@@ -442,7 +444,7 @@ where Curse has 100. Offsets checked against every character Pool of Radiance sh
 | 0x10C | health status |
 | 0x110 | to-hit bonus, raw: 40 is none |
 | 0x111, 0x112 | armour class front and behind, `60 - AC` |
-| 0x115, 0x117, 0x119 | current attack dice, sides, bonus |
+| 0x115, 0x117, 0x119 | current attack dice, sides, bonus (the bonus is signed: an orc's 2d4−1 is stored as 255) |
 | 0x11B, 0x11C | hit points now, movement |
 
 An inventory is 63-byte item records: a name at 0, type at 0x2E, plus at 0x32, readied

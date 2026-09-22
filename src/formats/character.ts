@@ -15,6 +15,8 @@
 import { u16, u8 } from './bytes.js'
 
 const i16 = (data: Uint8Array, at: number): number => (u16(data, at) << 16) >> 16
+/** A signed byte: a damage penalty is stored as 255 for -1. */
+const i8 = (data: Uint8Array, at: number): number => (u8(data, at) << 24) >> 24
 
 export const CHARACTER_RECORD_SIZE = 0x11d
 export const ITEM_RECORD_SIZE = 0x3f
@@ -182,7 +184,7 @@ export function readCharacter(data: Uint8Array): Character {
     hpRolled: u8(data, 0xb1),
     statusByte,
     status: STATUSES[statusByte] ?? 'okay',
-    attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: u8(data, 0x119) },
+    attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: i8(data, 0x119) },
     iconColours,
     iconSize: u8(data, 0xc0),
     iconHead: u8(data, 0xbd),
