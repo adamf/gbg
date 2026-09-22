@@ -48,7 +48,7 @@ export interface SessionUi {
   newLine(): void
   menu(prompt: string | undefined, items: readonly string[], layout: 'vertical' | 'horizontal'): Promise<number>
   inputNumber(): Promise<number>
-  inputString(): Promise<string>
+  inputString(maxLength?: number): Promise<string>
   delay(): Promise<void>
   /** A picture to show over the view, or nothing to go back to the view. */
   picture(image: Rgba | undefined): void
@@ -436,22 +436,31 @@ export class GameSession {
           : command === 'left' ? strafeLeft(map, this.party)
             : strafeRight(map, this.party)
 
-    if (!result.moved) {
-      // Walking off the edge through an open side is how the party leaves an area:
-      // the script's per-step code reads the flag and loads the neighbour.
-      if (this.leavesMap(result.blocked)) {
-        this.memory.write(POOL_ADDRESSES.triedToExit, 1)
-        await this.withScript(() => this.afterStep())
-        this.memory.write(POOL_ADDRESSES.triedToExit, 0)
-        return true
-      }
-      return false
-    }
+    // The original's order (coab ovr003, the 3D loop): the script's per-step entry
+    // runs first, from the square the party stands on, facing the way it means to
+    // go; it may refuse the move (0x6DC9 = 255) or take the party elsewhere. Only
+    // then does the party step, and the square it lands on is searched.
+    const leaving = !result.moved && this.leavesMap(result.blocked)
+    if (!result.moved && !leaving) return false
+    this.memory.write(POOL_ADDRESSES.moveCancelled, 0)
+    if (leaving) this.memory.write(POOL_ADDRESSES.triedToExit, 1)
+    const script = this.blockId
+    const was = { ...this.party }
+    let left = false
+    await this.withScript(async () => { left = await this.runEntry(this.program!.entryPoints.vmRun) })
+    if (leaving) this.memory.write(POOL_ADDRESSES.triedToExit, 0)
+    const refused = this.memory.read(POOL_ADDRESSES.moveCancelled) === 255
+    const moved = this.party.row !== was.row || this.party.col !== was.col
+    if (left || refused || moved || this.blockId !== script) return true
+    if (!result.moved) return true
 
     this.party = result.state
     // A wilderness square is a long way; a searched dungeon square is slow going.
     this.advanceTime(this.overhead ? 60 : this.searching ? 10 : 1)
-    await this.withScript(() => this.afterStep())
+    await this.withScript(async () => {
+      if (await this.runEntry(this.program!.entryPoints.searchLocation)) return
+      this.memory.write(POOL_ADDRESSES.lastEclBlock, this.blockId)
+    })
     return true
   }
 
@@ -1256,7 +1265,7 @@ export class GameSession {
       newLine: () => ui.newLine(),
       menu: (prompt, items, layout) => ui.menu(prompt, items, layout),
       inputNumber: () => ui.inputNumber(),
-      inputString: () => ui.inputString(),
+      inputString: (maxLength) => ui.inputString(maxLength),
       delay: () => ui.delay(),
       picture: async (id) => {
         ui.picture(id === 0xff ? undefined : await this.library.picture(this.area, id))

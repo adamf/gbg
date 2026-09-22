@@ -47,7 +47,8 @@ let lastStatus = ''
  * until the block is cleared (global 0x4ABB reaches 254), walk to the city hall
  * (city event 27) and find the clerk. Prints every text along the way.
  */
-const quest = process.env.PLAY_QUEST ? { phase: 'slums' as 'slums' | 'city' | 'hall' | 'done', log: [] as string[], started: 0, visited: new Set<string>() } : undefined
+type Phase = 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 'sail' | 'city2' | 'hall2' | 'done'
+const quest = process.env.PLAY_QUEST ? { phase: 'slums' as Phase, log: [] as string[], started: 0, visited: new Set<string>(), wrong: 0, anteroom: false } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
@@ -65,6 +66,7 @@ const ui: SessionUi = {
     if (text.includes('THE SHOPKEEPER PAYS')) sold++
     if (text.includes('WINS THE BOUT') || text.includes('YIELDS')) dueled = true
     if (quest && text.trim()) quest.log.push(`${quest.phase}: ${text.trim().slice(0, 110)}`)
+    if (quest && text.includes('WRONG WORD')) quest.wrong++
     if (process.env.PLAY_TEXTS && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
     else if (process.env.PLAY_DEBUG && lastStatus.startsWith('in the') && text.trim()) console.log(`  text: ${text.trim().slice(0, 100)}`)
     if (text.trim()) texts.push(text.trim().slice(0, 80))
@@ -88,8 +90,13 @@ const ui: SessionUi = {
     trainTries = 0
     if (prompt?.startsWith('CAMP')) return wantRest && !prompt.includes('EVERYONE IS WELL') ? Math.max(0, find('REST')) : find('LEAVE')
     if (find('QUICK FIGHT') >= 0) { fights++; return find('QUICK FIGHT') }
+    if (quest && find('GO') >= 0 && find('FIGHT') >= 0 && labels.length === 2) return find('GO')
     if (find('FIGHT') >= 0 && find('RUN') >= 0) return find('FIGHT')
-    if (find('COMBAT') >= 0 && find('WAIT') >= 0) return quest ? find('COMBAT') : random(9) < 7 ? find('COMBAT') : find('FLEE')
+    if (find('COMBAT') >= 0 && find('WAIT') >= 0) {
+      // In town on a quest the party talks its way past or leaves; it fights where the fights count.
+      if (quest && (session.scriptId === 0 || session.scriptId === 8)) return find('PARLAY') >= 0 ? find('PARLAY') : find('FLEE')
+      return quest ? find('COMBAT') : random(9) < 7 ? find('COMBAT') : find('FLEE')
+    }
     if (find('SHARE') >= 0) return find('SHARE')
     if (find('LEAVE THE REST') >= 0) {
       // Take what can be sold, up to a pack each; the shops turn it into training gold.
@@ -98,7 +105,13 @@ const ui: SessionUi = {
       return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
     }
     if (quest && find('ATTACK') >= 0 && labels.length <= 3) return find('ATTACK')
-    if (quest && find('YES') === 0 && labels.length === 2) return 0
+    if (quest && find('YES') === 0 && labels.length === 2) {
+      const last = texts.slice(-3).join(' ')
+      // No to the boat while the keep is unfinished, and never a wager or another round of dice.
+      if (quest.phase === 'sokal' && /BOAT BACK/.test(last)) return 1
+      if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?/.test(last)) return 1
+      return 0
+    }
     if (prompt?.startsWith('THE TEMPLE.')) {
       if ((menuSeen.get(key) ?? 0) > 4) return find('LEAVE')
       const dead = session.roster.members.some((m) => m.character.status === 'dead')
@@ -114,8 +127,14 @@ const ui: SessionUi = {
     if (find('LEAVE') >= 0 && labels.length <= 3 && find('NORTH') < 0 && (menuSeen.get(key) ?? 0) <= 3) return find('LEAVE')
     return random(items.length - 1)
   },
-  inputNumber: async () => 1,
-  inputString: async () => 'BOT',
+  inputNumber: async () => (/WAGER|BET/.test(texts[texts.length - 1] ?? '') ? 0 : 1),
+  inputString: async (maxLength) => {
+    // Sokal Keep's undead want the journal's words: seven letters is SAMOSUD or
+    // SHESTNI, three is LUX. A wrong word switches the guess.
+    if (!quest) return 'BOT'
+    if (maxLength === 3) return 'LUX'
+    return quest.wrong % 2 === 0 ? 'SAMOSUD' : 'SHESTNI'
+  },
   delay: async () => {},
   picture: () => {},
   encounter: () => {},
@@ -199,6 +218,8 @@ const commands = ['forward', 'forward', 'forward', 'forward', 'turnLeft', 'turnR
 const HALL_DOORS = new Map<string, number[]>([['city', [10, 17]], ['hall', [12, 13, 16, 17]], ['shop', [19, 21, 22, 23]]])
 /** Which school teaches which class, by the city's event byte on its door. */
 const SCHOOL_OF: Record<string, number> = { cleric: 12, 'magic-user': 13, fighter: 16, thief: 17 }
+/** The city hall's ways out: stepping on one puts the party back in the street. */
+const EXITS = new Set([26])
 const TRAINING_COST = 1000
 
 function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
@@ -231,7 +252,7 @@ function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
 let target: { row: number; col: number; events: string; until: number } | undefined
 
 /** The first command of a shortest walk to any cell with one of the events, or nothing. */
-function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[] | ReadonlySet<string>, step: number): 'forward' | 'turnLeft' | 'turnRight' | undefined {
+function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[] | ReadonlySet<string>, step: number, avoid?: ReadonlySet<number>): 'forward' | 'turnLeft' | 'turnRight' | undefined {
   const key = (row: number, col: number) => `${row},${col}`
   const cells = events instanceof Set ? events : undefined
   const wanted = cells ? [...cells].join(';') : (events as readonly number[]).join(',')
@@ -265,6 +286,8 @@ function routeTo(map: GeoMap, from: { row: number; col: number; facing: Directio
       const row = here.row + d.dRow
       const col = here.col + d.dCol
       if (prev.has(key(row, col))) continue
+      // Squares whose events throw the party out are not on the way to anywhere.
+      if (avoid && avoid.has(cellAt(map, row, col)?.event ?? 0)) continue
       prev.set(key(row, col), { row: here.row, col: here.col, dir })
       queue.push({ row, col })
     }
@@ -300,7 +323,7 @@ for (let step = 0; step < STEPS; step++) {
   // On a quest the party rests whenever anyone is scratched or a spell is spent — the
   // Slums are lost by fighting worn down, not by fighting.
   const hurt = members.some((m) => (quest ? m.character.hpCurrent < m.character.hpMax : m.character.hpCurrent < m.character.hpMax / 2) || m.character.status !== 'okay')
-  const noSpells = members.some((m) => quest ? m.character.prepared.length > m.character.memorised.length : m.character.prepared.length > 0 && m.character.memorised.length === 0)
+  const noSpells = members.some((m) => m.character.prepared.length > 0 && m.character.memorised.length === 0)
   if ((hurt || noSpells) && (quest || step % 5 === 0)) {
     wantRest = true
     if (process.env.PLAY_DEBUG) console.log(`camp at step ${step}`)
@@ -309,6 +332,7 @@ for (let step = 0; step < STEPS; step++) {
   }
   const before = `${session.party.row},${session.party.col},${session.scriptId}`
   if (quest) {
+    if (process.env.PLAY_DEBUG && quest.phase !== 'slums') console.log(`q${step} ${quest.phase} s${session.scriptId} @${session.party.row},${session.party.col} ${session.party.facing} anteroom ${quest.anteroom} event ${session.map ? cellAt(session.map, session.party.row, session.party.col)?.event : '-'}`)
     const cleared = mem().read(0x4abb) >= 254
     if (quest.phase === 'slums' && cleared) { quest.phase = 'city'; console.log(`step ${step}: THE SLUMS ARE CLEARED (kills counted ${mem().read(0x4a80)})`) }
     if (quest.phase === 'slums' && session.scriptId !== 20 && !session.busy) {
@@ -321,15 +345,85 @@ for (let step = 0; step < STEPS; step++) {
       continue
     }
     if (quest.phase === 'city' && session.scriptId === 8) { quest.phase = 'hall'; console.log(`step ${step}: IN THE CITY HALL`) }
-    if (quest.phase === 'hall' && quest.log.some((l) => /REWARD|CLERK SPEAKS/.test(l))) { quest.phase = 'done'; console.log(`step ${step}: THE CLERK HAS SPOKEN`); break }
+    if (quest.phase === 'hall' && quest.log.some((l) => /HERE IS YOUR REWARD/.test(l))) { quest.phase = 'dock'; console.log(`step ${step}: THE CLERK HAS PAID; TO THE DOCK`) }
+    if (quest.phase === 'hall2' && quest.log.filter((l) => /HERE IS YOUR REWARD/.test(l)).length >= 2) { quest.phase = 'done'; console.log(`step ${step}: THE CLERK HAS PAID FOR SOKAL KEEP`); break }
+    if ((quest.phase === 'dock' || quest.phase === 'pier') && session.scriptId === 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+    if (quest.phase === 'dock' && quest.log.some((l) => /CATCH THE BOAT|ONLY BOAT OUT/.test(l))) { quest.phase = 'pier'; console.log(`step ${step}: THE HARBOUR MASTER HAS SPOKEN`) }
+    if (quest.phase === 'pier' && session.scriptId === 21) { quest.phase = 'sokal'; console.log(`step ${step}: AT SOKAL KEEP`) }
+    if (quest.phase === 'sokal' && mem().read(0x4aa7) >= 254) { quest.phase = 'sail'; console.log(`step ${step}: SOKAL KEEP IS CLEARED`) }
+    if (quest.phase === 'sail' && session.scriptId === 0) { quest.phase = 'city2'; quest.anteroom = false; console.log(`step ${step}: BACK IN PHLAN`) }
+    if (quest.phase === 'city2' && session.scriptId === 8) { quest.phase = 'hall2'; console.log(`step ${step}: IN THE CITY HALL AGAIN`) }
+    if (quest.phase === 'dock' && session.scriptId === 0 && session.map && !session.busy) {
+      // The harbour master only speaks to a party facing north: come at him from the dock sign.
+      if (session.party.row === 2 && session.party.col === 11) {
+        const cmd = session.party.facing === 'north' ? 'forward' : session.party.facing === 'east' ? 'turnLeft' : 'turnRight'
+        try { await withTimeout(session.move(cmd), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
+        continue
+      }
+      const routed = routeTo(session.map, session.party, [3], step)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if (quest.phase === 'pier' && session.scriptId === 0 && session.map && !session.busy) {
+      const routed = routeTo(session.map, session.party, [1], step)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if ((quest.phase === 'city2') && session.scriptId !== 0 && session.scriptId !== 8 && !session.busy) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+    if (quest.phase === 'city2' && session.scriptId === 0 && session.map && !session.busy) {
+      const routed = routeTo(session.map, session.party, [27], step)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if (quest.phase === 'sail' && session.scriptId === 21 && session.map && !session.busy) {
+      // Off any open edge: the keep's script offers the boat back.
+      const { row, col, facing } = session.party
+      const map = session.map
+      const outward = (c: { row: number; col: number; walls: Record<string, number>; doors: Record<string, number> }): Direction | undefined =>
+        c.row === 0 && (c.walls.north === 0 || c.doors.north) ? 'north' : c.row === 15 && (c.walls.south === 0 || c.doors.south) ? 'south'
+        : c.col === 0 && (c.walls.west === 0 || c.doors.west) ? 'west' : c.col === 15 && (c.walls.east === 0 || c.doors.east) ? 'east' : undefined
+      const here = cellAt(map, row, col)
+      const edge = here && outward(here)
+      if (edge) {
+        const cmd = facing === edge ? 'forward' : 'turnRight'
+        try { await withTimeout(session.move(cmd), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
+        continue
+      }
+      const edges = new Set(map.cells.filter((c) => outward(c)).map((c) => `${c.row},${c.col}`))
+      const routed = routeTo(map, session.party, edges, step)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if (quest.phase === 'sokal' && session.scriptId !== 21 && !session.busy) {
+      // Fell off the keep (the boat prompt answered wrong): back in.
+      if (session.scriptId === 0) { const routed = session.map ? routeTo(session.map, session.party, [1], step) : undefined; if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue } }
+    }
     if (quest.phase === 'city' && session.map && !session.busy) {
       const routed = routeTo(session.map, session.party, [27], step)
       if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
     }
-    if (quest.phase === 'hall' && session.scriptId === 8 && session.map && !session.busy) {
-      // The clerk is the hall's event 26; the guarded door is the council's, not hers.
-      const routed = routeTo(session.map, session.party, [26], step)
+    if ((quest.phase === 'hall' || quest.phase === 'hall2') && session.scriptId !== 8 && !session.busy) {
+      // Thrown out, or reloaded into the street: back to the hall's door.
+      if (session.scriptId !== 0) { await session.enterLevel((await library.levelById(0, 3))!); continue }
+      const routed = session.map ? routeTo(session.map, session.party, [27], step) : undefined
       if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if ((quest.phase === 'hall' || quest.phase === 'hall2') && session.scriptId === 8 && session.map && !session.busy) {
+      // The clerk is the hall's event 29, and she only speaks after the party has
+      // passed her anteroom, event 28; 26 is the way out.
+      const here = cellAt(session.map, session.party.row, session.party.col)?.event
+      if (here === 28) quest.anteroom = true
+      // Her door faces south into the room below (event 31 at 6,5): come up from there,
+      // since the hall turns away a party arriving at her cell facing east or south.
+      let routed: ReturnType<typeof routeTo>
+      if (!quest.anteroom) routed = routeTo(session.map, session.party, [28], step, EXITS)
+      else if (session.party.row === 6 && session.party.col === 5) routed = session.party.facing === 'north' ? 'forward' : session.party.facing === 'east' ? 'turnLeft' : 'turnRight'
+      else routed = routeTo(session.map, session.party, new Set(['6,5']), step, EXITS)
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+    }
+    if (quest.phase === 'sokal' && session.scriptId === 21 && session.map && !session.busy) {
+      const here = `${session.scriptId}:${session.party.row},${session.party.col}`
+      quest.visited.add(here)
+      const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${session.scriptId}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
+      const routed = unvisited.size > 0 ? routeTo(session.map, session.party, unvisited, step) : undefined
+      if (routed) { try { await withTimeout(session.move(routed), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } continue }
+      if (unvisited.size === 0) quest.visited.clear()
     }
     if (quest.phase === 'slums' && session.map && !session.busy) {
       // The block's buildings hold the fights the wandering ones stop short of: walk

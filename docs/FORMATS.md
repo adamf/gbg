@@ -347,6 +347,16 @@ four-walled cell is solid rock only when it has no door at all. Two more area wo
 (hours) and how likely (percent) a resting party is interrupted, and `0x6DE2`/`0x6E6C`
 set before a COMBAT with no monsters loaded mean the temple and the shop.
 
+### The order of a step
+
+coab's 3D loop (`ovr003`) runs the script's per-step entry *before* the party moves,
+from the square it stands on and facing the way it means to go; the entry may take the
+party elsewhere or refuse the move by writing 255 to `0x6DC9`. Only then does the party
+step, and the square it lands on runs the search entry. Getting this backwards made
+the city clerk's office refuse everyone: its per-step code guards her south and east
+doors against a party without a commission, and a party that had just stepped in from
+the anteroom looked, from the wrong side of the move, like one trying to leave.
+
 ### What the interpreter does not do yet
 
 Spells, items in play, CHECK PARTY and shops. Those commands run, do nothing, and say

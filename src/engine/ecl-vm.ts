@@ -62,6 +62,8 @@ export const POOL_ADDRESSES = {
   scratchEnd: 0x4a20,
   /** Set when the party walks off the map's edge; the per-step code sends them to the next area. */
   triedToExit: 0x6dd5,
+  /** 255 from the per-step code means the move the party asked for does not happen. */
+  moveCancelled: 0x6dc9,
   /** Resting: a check every this many hours, and the chance of an interruption. */
   restPeriod: 0x6dd2,
   restChance: 0x6dd3,
@@ -299,7 +301,8 @@ export interface EclHost {
   /** Returns the chosen index. */
   menu?(prompt: string | undefined, items: readonly string[], layout: 'vertical' | 'horizontal'): Promise<number>
   inputNumber?(): Promise<number>
-  inputString?(): Promise<string>
+  /** `maxLength` is the INPUT STRING's own limit, which is also a hint at the word wanted. */
+  inputString?(maxLength: number): Promise<string>
   delay?(): Promise<void> | void
   /** A PIC block to show, or 255 to go back to the view. */
   picture?(id: number): void
@@ -608,7 +611,7 @@ export class EclVm {
 
       case 0x10: { // INPUT STRING
         const { operands } = this.operands(2)
-        const text = this.host.inputString ? await this.host.inputString() : ''
+        const text = this.host.inputString ? await this.host.inputString(this.value(operands[0]) & 0xff) : ''
         this.memory.writeString(operands[1]!.word, text.length === 0 ? ' ' : text)
         return
       }
