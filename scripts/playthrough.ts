@@ -67,7 +67,7 @@ type Phase = 'outfit' | 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 
  * The clerk's other commissions, each an area to clear and the flag its script sets
  * to 254 when it is. The walk there is a harness shortcut; the area is played.
  */
-const TARGETS = [
+const TARGETS: { name: string; script: number; area: number; flag?: number }[] = [
   { name: "Kuto's Well", script: 29, area: 8, flag: 0x4aa6 },
   { name: 'Podal Plaza', script: 18, area: 1, flag: 0x4ab0 },
   { name: "Mendor's Library", script: 15, area: 2, flag: 0x4aaa },
@@ -75,6 +75,24 @@ const TARGETS = [
   { name: 'Temple of Bane', script: 24, area: 1, flag: 0x4aa8 },
   { name: 'Stojanow Gate', script: 9, area: 2, flag: 0x4ab9 },
   { name: 'Map 10', script: 10, area: 4, flag: 0x4ab1 },
+  // The rest of the game as a tour: no commission to collect, every event square once,
+  // two laps, then on — so every script meets a live party.
+  { name: 'Cadorna Textile House', script: 2, area: 4 },
+  { name: 'Kobold Caves', script: 13, area: 8 },
+  { name: 'Lizard Men Keep', script: 16, area: 8 },
+  { name: 'Lizard Men Catacombs', script: 30, area: 8 },
+  { name: 'Buccaneer Base', script: 1, area: 6 },
+  { name: 'Outpost of Zhentil Keep', script: 28, area: 6 },
+  { name: 'Nomad Camp', script: 17, area: 7 },
+  { name: "Sorcerer's Island, Level 1", script: 22, area: 7 },
+  { name: "Sorcerer's Island, Levels 2 and 3", script: 23, area: 7 },
+  { name: 'Wilderness 25', script: 25, area: 6 },
+  { name: 'Wilderness 26', script: 26, area: 7 },
+  { name: 'Wilderness 27', script: 27, area: 8 },
+  { name: 'Valjevo Castle, North West', script: 3, area: 5 },
+  { name: 'Valjevo Castle, North East', script: 4, area: 5 },
+  { name: 'Valjevo Castle, South West', script: 6, area: 5 },
+  { name: 'Valjevo Castle, Inner Tower', script: 7, area: 5 },
 ]
 const quest = process.env.PLAY_QUEST ? { phase: (process.env.PLAY_PARTY === 'roll' ? 'outfit' : 'slums') as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
@@ -101,7 +119,8 @@ const ui: SessionUi = {
     if (text.includes('THE PARTY HAS FALLEN')) losses++
     if (text.includes('THE PARTY RESTS')) rests++
     // A locked door is the hour, not the square: rest until it opens, and hold no grudge against the square.
-    if (text.includes('THE DOOR IS LOCKED')) { lockedDoor = true; wantTimePass = true }
+    // Only the town's doors are locked by the hour; a locked door anywhere else is routed round like a wall.
+    if (text.includes('THE DOOR IS LOCKED') && session.scriptId === 0) { lockedDoor = true; wantTimePass = true }
     if (text.includes('IS NOW A LEVEL')) trained++
     if (text.includes('THE SHOPKEEPER PAYS')) sold++
     if (text.includes('WINS THE BOUT') || text.includes('YIELDS')) dueled = true
@@ -530,8 +549,10 @@ for (let step = 0; step < STEPS; step++) {
     if (quest.phase === 'area' || quest.phase === 'collect') {
       const target = TARGETS[quest.target]
       if (!target) { quest.phase = 'done'; console.log(`step ${step}: EVERY TARGET TRIED`); break }
-      if (quest.phase === 'area' && (mem().read(target.flag) >= 254 || quest.laps >= (target.script === 15 ? 8 : 3))) {
-        console.log(`step ${step}: ${target.name} ${mem().read(target.flag) >= 254 ? 'IS CLEARED' : `GIVEN UP AFTER ${quest.laps} LAPS`} (flag ${mem().read(target.flag)})`)
+      const cleared = target.flag !== undefined && mem().read(target.flag) >= 254
+      if (quest.phase === 'area' && (cleared || quest.laps >= (target.script === 15 ? 8 : target.flag === undefined ? 2 : 3))) {
+        console.log(`step ${step}: ${target.name} ${cleared ? 'IS CLEARED' : `${target.flag === undefined ? 'TOURED' : 'GIVEN UP'} AFTER ${quest.laps} LAPS`}${target.flag !== undefined ? ` (flag ${mem().read(target.flag)})` : ''}`)
+        if (target.flag === undefined) { quest.target++; quest.visited.clear(); quest.laps = 0; console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`); continue }
         quest.phase = 'collect'; quest.anteroom = false
       }
       let paid = false
@@ -540,12 +561,18 @@ for (let step = 0; step < STEPS; step++) {
         paid = true
         console.log(`step ${step}: THE CLERK HAS PAID FOR ${target.name}`)
       }
-      if (quest.phase === 'collect' && (paid || quest.log.slice(-40).some((l) => /THESE ARE ALL OF THE COMMISSIONS/.test(l)) && mem().read(target.flag) !== 254)) {
+      if (quest.phase === 'collect' && (paid || quest.log.slice(-40).some((l) => /THESE ARE ALL OF THE COMMISSIONS/.test(l)) && mem().read(target.flag ?? 0) !== 254)) {
         quest.target++; quest.visited.clear(); quest.laps = 0; quest.phase = 'area'
         console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`)
         continue
       }
-      if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) { await teleport((await library.levelById(target.script, target.area))!); continue }
+      if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) {
+        const ref = await library.levelById(target.script, target.area)
+        if (ref) await teleport(ref)
+        // A level with no script of its own (the Wealthy Area) cannot be played: skip it.
+        if (!ref || session.scriptId !== target.script) { console.log(`step ${step}: ${target.name} HAS NO SCRIPT TO PLAY; NEXT ${TARGETS[quest.target + 1]?.name ?? 'nothing'}`); quest.target++; quest.visited.clear(); quest.laps = 0 }
+        continue
+      }
       if (quest.phase === 'area' && session.map && !session.busy) {
         // Mendor's books turn up only while searching the stacks; searching anywhere
         // else is slow going and wakes more wandering monsters.

@@ -732,6 +732,9 @@ export class EclVm {
         this.lastCombat = this.host.combat ? await this.host.combat(this.monsters) : 'won'
         this.monsters.length = 0
         this.host.clearMonsters?.()
+        // A wiped party is the end of the game in the original; the script does not
+        // go on to loop its "surrender or die" over the fallen.
+        if (this.lastCombat === 'lost') { this.result = { reason: 'exit' }; this.stack.length = 0 }
         return
       }
 
