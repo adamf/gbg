@@ -430,8 +430,8 @@ for (let step = 0; step < STEPS; step++) {
     if (quest.phase === 'area' || quest.phase === 'collect') {
       const target = TARGETS[quest.target]
       if (!target) { quest.phase = 'done'; console.log(`step ${step}: EVERY TARGET TRIED`); break }
-      if (quest.phase === 'area' && (mem().read(target.flag) >= 254 || quest.laps >= 3)) {
-        console.log(`step ${step}: ${target.name} ${mem().read(target.flag) >= 254 ? 'IS CLEARED' : 'GIVEN UP AFTER 3 LAPS'} (flag ${mem().read(target.flag)})`)
+      if (quest.phase === 'area' && (mem().read(target.flag) >= 254 || quest.laps >= (target.script === 15 ? 8 : 3))) {
+        console.log(`step ${step}: ${target.name} ${mem().read(target.flag) >= 254 ? 'IS CLEARED' : `GIVEN UP AFTER ${quest.laps} LAPS`} (flag ${mem().read(target.flag)})`)
         quest.phase = 'collect'; quest.anteroom = false
       }
       let paid = false
@@ -447,6 +447,9 @@ for (let step = 0; step < STEPS; step++) {
       }
       if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) { await session.enterLevel((await library.levelById(target.script, target.area))!); continue }
       if (quest.phase === 'area' && session.map && !session.busy) {
+        // Mendor's books turn up only while searching the stacks; searching anywhere
+        // else is slow going and wakes more wandering monsters.
+        if (session.searching !== (target.script === 15)) session.toggleSearch()
         // Keyed by map as well as script: Kuto's Well is two maps under one script.
         const where = `${session.scriptId}/${session.map.id}`
         quest.visited.add(`${where}:${session.party.row},${session.party.col}`)
