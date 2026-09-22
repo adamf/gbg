@@ -28,7 +28,8 @@ import { missileFor, SPRITE } from './sprites.js'
 import { refit } from './burden.js'
 import { buy, describeCoins, emptyPool, poolIsEmpty, sell, shareCoins, take, type Pool, worth } from './treasure.js'
 import { itemDisplayName } from '../formats/items.js'
-import { spellById, type Spell } from '../formats/spells.js'
+import { spellById, type Spell, type SpellTarget } from '../formats/spells.js'
+import { canReadScroll, canScribe, isScroll, readFromScroll, scribe, scrollReader, scrollSpells } from './scrolls.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
 import { readyToTrain, train, TRAINING_COST } from './training.js'
 import { ready as readyItem, recompute, unready } from './equipment.js'
@@ -323,7 +324,7 @@ export class GameSession {
         const state = hurt.length > 0 ? `${hurt.length} NEED REST.` : unready.length > 0 ? 'SPELLS TO MEMORISE.' : 'EVERYONE IS WELL.'
         this.ui.showParty(this.party)
         const choice = await this.ui.menu(`CAMP. ${state}`,
-          ['REST', 'MEMORISE', 'CAST', 'USE', 'POOL COINS', 'SAVE GAME', 'EXPORT DOS SAVE B', 'LEAVE CAMP'], 'vertical')
+          ['REST', 'MEMORISE', 'CAST', 'USE', 'POOL COINS', 'SAVE GAME', 'EXPORT DOS SAVE B', 'SCRIBE', 'LEAVE CAMP'], 'vertical')
         if (choice === 4) {
           const who = await this.ui.who('POOL ON WHOM?', this.roster.members)
           const onto = this.roster.members[who]
@@ -343,6 +344,8 @@ export class GameSession {
         } else if (choice === 6) {
           this.ui.files(await this.dosSave('B'))
           this.ui.print('SAVGAMB.DAT AND THE CHRDATB FILES ARE READY. PUT THEM IN THE GAME FOLDER AND LOAD GAME B.', true)
+        } else if (choice === 7) {
+          await this.scribeMenu()
         } else {
           return
         }
@@ -1059,10 +1062,10 @@ export class GameSession {
     const pick = await this.ui.menu('USE:', [...usable.map((u) => u.label.toUpperCase()), 'NOTHING'], 'vertical')
     const choice = usable[pick]
     if (!choice) return
-    const target = await this.ui.who('ON WHOM?', this.roster.members)
-    const onto = this.roster.members[target]
-    if (!onto) return
-    this.ui.print((await this.useItem(member, choice, [onto.character])).join('\n'), true)
+    const party = this.roster.members.map((m) => ({ member: m, label: m.character.name }))
+    const targets = await this.chooseTargets(choice, party, [])
+    if (!targets || targets.length === 0) return
+    this.ui.print((await this.useItem(member, choice, targets)).join('\n'), true)
   }
 
   /** In a fight: a potion for a friend or a wand at a foe. */
@@ -1074,13 +1077,10 @@ export class GameSession {
     const pick = await this.ui.menu('USE:', [...usable.map((u) => u.label.toUpperCase()), 'NOTHING'], 'vertical')
     const choice = usable[pick]
     if (!choice) return []
-    const atFoes = choice.label.toUpperCase().includes('WAND')
-    const candidates = atFoes ? combat.monstersStanding : combat.party
-    const at = await this.ui.menu(atFoes ? 'AT WHOM?' : 'ON WHOM?', [...candidates.map((c) => c.label), 'NOBODY'], 'vertical')
-    const target = candidates[at]
-    if (!target) return []
+    const targets = await this.chooseTargets(choice, combat.party, combat.monstersStanding)
+    if (!targets || targets.length === 0) return []
     combat.acted.add(member.character)
-    return this.useItem(member, choice, [target.member.character], combat)
+    return this.useItem(member, choice, targets, combat)
   }
 
   /** A round's casting: any caster with something ready may use it before blows fall. */
@@ -1409,10 +1409,10 @@ export class GameSession {
   }
 
   /** Something from a pack: potions and wands, in or out of a fight. */
-  usableItems(member: Member): { index: number; label: string; use: (targets: Character[], combat?: Combat) => string[] }[] {
+  usableItems(member: Member): Usable[] {
     const random = this.random
     const names = this.itemNames
-    const out: { index: number; label: string; use: (targets: Character[], combat?: Combat) => string[] }[] = []
+    const out: Usable[] = []
     member.items.forEach((item, index) => {
       const label = itemDisplayName(item, names)
       const upper = label.toUpperCase()
@@ -1427,24 +1427,78 @@ export class GameSession {
       if (upper.includes('POTION') && upper.includes('EXTRA HEALING')) out.push({ index, label, use: heal(3, 8, 3) })
       else if (upper.includes('POTION') && upper.includes('HEALING')) out.push({ index, label, use: heal(2, 4, 2) })
       else if (upper.includes('WAND') && upper.includes('MAGIC MISSILE') && item.plus > 0) {
-        out.push({ index, label: `${label} (${item.plus} CHARGES)`, use: (targets, combat) => {
+        out.push({ index, label: `${label} (${item.plus} CHARGES)`, target: 'foe', use: (targets, combat) => {
           item.plus -= 1
           const spell = spellById(15)!
           return cast(spell, { ...member.character, levels: [0, 0, 0, 0, 0, 6, 0, 0] }, targets, random, combat).lines
         } })
+      } else if (isScroll(item) && canReadScroll(member.character, item)) {
+        // Each spell still on the scroll is read separately; reading it uses it up.
+        for (const spell of scrollSpells(item)) {
+          out.push({ index, label: `READ ${spell.name.toUpperCase()} FROM THE SCROLL`, target: spell.target, use: (targets, combat) => {
+            readFromScroll(item, spell.id)
+            return cast(spell, scrollReader(member.character, item), targets, random, combat).lines
+          } })
+        }
       }
     })
     return out
   }
 
+  /** Reading a scroll: who it is read at, by the spell's own target. */
+  private async chooseTargets(choice: Usable, party: Combatant[], foes: Combatant[]): Promise<Character[] | undefined> {
+    const target = choice.target ?? 'ally'
+    if (target === 'party') return party.map((c) => c.member.character)
+    if (target === 'foes') return foes.map((c) => c.member.character)
+    const atFoes = target === 'foe'
+    const candidates = atFoes ? foes : party
+    if (candidates.length === 0) return undefined
+    const at = await this.ui.menu(atFoes ? 'AT WHOM?' : 'ON WHOM?', [...candidates.map((c) => c.label), 'NOBODY'], 'vertical')
+    const chosen = candidates[at]
+    return chosen ? [chosen.member.character] : undefined
+  }
+
+  /** At camp, a magic-user copies a scroll's spell into the book; the scroll loses it. */
+  private async scribeMenu(): Promise<void> {
+    await this.names()
+    const choices: { member: Member; item: Item; spell: Spell }[] = []
+    for (const member of this.roster.members) {
+      for (const item of member.items) {
+        if (!isScroll(item)) continue
+        for (const spell of scrollSpells(item)) if (canScribe(member.character, spell)) choices.push({ member, item, spell })
+      }
+    }
+    if (choices.length === 0) {
+      this.ui.print('NO MAGIC-USER HERE CARRIES A SCROLL WITH A SPELL TO LEARN.', true)
+      return
+    }
+    const pick = await this.ui.menu('SCRIBE:', [...choices.map((c) => `${c.member.character.name}: ${c.spell.name.toUpperCase()}`), 'NOTHING'], 'vertical')
+    const chosen = choices[pick]
+    if (!chosen) return
+    scribe(chosen.member.character, chosen.item, chosen.spell)
+    if (scrollSpells(chosen.item).length === 0) chosen.member.items.splice(chosen.member.items.indexOf(chosen.item), 1)
+    this.ui.print(`${chosen.member.character.name} COPIES ${chosen.spell.name.toUpperCase()} INTO THE SPELLBOOK. THE SCROLL FADES.`, true)
+    this.ui.party(this.roster.members, this.roster.selected)
+  }
+
   /** Uses one thing on someone; consumes potions. Returns what happened. */
-  async useItem(member: Member, choice: { index: number; use: (targets: Character[], combat?: Combat) => string[] }, targets: Character[], combat?: Combat): Promise<string[]> {
+  async useItem(member: Member, choice: Usable, targets: Character[], combat?: Combat): Promise<string[]> {
     const item = member.items[choice.index]
     const lines = choice.use(targets, combat)
-    if (item && itemDisplayName(item, this.itemNames).toUpperCase().includes('POTION')) member.items.splice(choice.index, 1)
+    const spent = item && (itemDisplayName(item, this.itemNames).toUpperCase().includes('POTION') || (isScroll(item) && scrollSpells(item).length === 0))
+    if (spent) member.items.splice(choice.index, 1)
     this.ui.party(this.roster.members, this.roster.selected)
     return lines
   }
+}
+
+/** Something a member can use: a potion, a wand's charge, a spell on a scroll. */
+interface Usable {
+  index: number
+  label: string
+  /** Who it goes at, when the thing is a spell; potions go on a friend. */
+  target?: SpellTarget
+  use: (targets: Character[], combat?: Combat) => string[]
 }
 
 function stepFrom(row: number, col: number, facing: Direction): { row: number; col: number } {
