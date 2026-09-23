@@ -71,7 +71,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   and a square takes an hour; the wilderness blocks (25 to 27) carry their own
   encounters. The scripts' overland coordinates run on a larger grid whose data is not
   yet found, so they stay plain memory and the party walks the map it is on.
-- **Monsters that shoot and cast** — from the same gear and books the party uses.
+- **Monsters that shoot and cast** — from the same gear and books the party uses. The
+  computer's own party (QUICK, and the bot) memorises fireballs and holds first, casts the
+  spell worth most against what stands there, strikes the held and sleeping first, and
+  presents the holy symbol to undead.
 
 - **The rest a run needs** — NPCs join by ADD NPC, thieves ROB, SPELL and CHECK PARTY
   answer from the party, clerics turn undead (T in a fight), potions and wands are used
@@ -98,9 +101,10 @@ Sokal Keep, answer its undead with the journal's words, clear it, sail home and 
 again, then the clerk's other areas one by one, and then tours every other scripted
 level in the game two laps each (`PLAY_TARGET=<name>` starts there). It has done all of that on several seeds
 with the pre-made party and with one it rolled (`PLAY_PARTY=roll`, which buys its gear
-first); with the sixth-level party `scripts/make-save.ts` writes (`PLAY_PARTY=C`, and the
-page's NEW GAME offers LOAD GAME C) it clears Sokal Keep too. That is how far the story is
-proven to run. The clerk's office is reached through her anteroom from the south. Script commands that need
+first); with the parties `scripts/make-save.ts` writes (`PLAY_PARTY=C` at level 6, D at
+8, E at the cap; the page's NEW GAME offers each as LOAD GAME) it clears Sokal Keep, the
+Temple of Bane, Stojanow Gate and Valhingen Graveyard, climbs Valjevo's tower, beats the
+audience hall's guards and Tyranthraxus, and sees the ending. The whole story runs. The clerk's office is reached through her anteroom from the south. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
