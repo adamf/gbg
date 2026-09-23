@@ -572,7 +572,16 @@ export class Battle {
       this.actedThisRound = true
       return this.turnUndead(f)
     }
-    const spells = this.combat.has(me, 'silence') ? [] : ready(me).filter((s) => s.target === 'foe' || s.target === 'foes')
+    // A spell that nothing here would feel is not cast: no sleep over eighth-level
+    // guards, no hold over foes already held.
+    const foesUp = this.fighters.filter((o) => o.side !== f.side && standing(o.combatant.member.character))
+    const worthCasting = (s: Spell): boolean => {
+      const e = s.effect
+      if (e.kind === 'sleep') return foesUp.some((o) => o.combatant.member.character.status === 'okay' && o.combatant.member.character.hitDice <= (e.maxHitDice ?? 4))
+      if (e.kind === 'hold') return foesUp.some((o) => o.combatant.member.character.status === 'okay')
+      return true
+    }
+    const spells = this.combat.has(me, 'silence') ? [] : ready(me).filter((s) => (s.target === 'foe' || s.target === 'foes') && worthCasting(s))
     if (spells.length > 0) {
       const spell = spells[this.random(spells.length - 1)]!
       const foes = this.fighters.filter((o) => o.side !== f.side && able(o.combatant.member.character))
@@ -588,16 +597,23 @@ export class Battle {
       }
     }
 
+    // The helpless first: a held or sleeping foe is hit without fail for double, and
+    // wakes to fight again if left.
+    const pick = (among: Fighter[]): Fighter => {
+      const helpless = among.filter((o) => o.combatant.member.character.status === 'asleep' || o.combatant.member.character.status === 'held')
+      const pool = helpless.length > 0 ? helpless : among
+      return pool[this.random(pool.length - 1)]!
+    }
     const far = this.inRange(f)
     if (far.length > 0) {
-      lines.push(...this.attack(f, far[this.random(far.length - 1)]!))
+      lines.push(...this.attack(f, pick(far)))
       return lines
     }
 
     for (let step = 0; step < 20; step++) {
       const near = this.neighbours(f)
       if (near.length > 0) {
-        lines.push(...this.attack(f, near[this.random(near.length - 1)]!))
+        lines.push(...this.attack(f, pick(near)))
         break
       }
       if (f.moves === 0) break
