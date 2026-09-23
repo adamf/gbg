@@ -29,13 +29,19 @@ const kept = new Map<string, Snapshot>()
 
 const server = new McpServer({ name: 'gold-box-web', version: '0.1.0' })
 
-const reply = async (work: () => Promise<unknown> | unknown) => {
-  try {
-    await work()
-    return { content: [{ type: 'text' as const, text: JSON.stringify(game.state()) }] }
-  } catch (e) {
-    return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e instanceof Error ? e.message : String(e), ...game.state() }) }], isError: true }
-  }
+// One call at a time, in the order they came: the game is a single conversation.
+let queue: Promise<unknown> = Promise.resolve()
+const reply = (work: () => Promise<unknown> | unknown) => {
+  const turn = queue.then(async () => {
+    try {
+      await work()
+      return { content: [{ type: 'text' as const, text: JSON.stringify(game.state()) }] }
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e instanceof Error ? e.message : String(e), ...game.state() }) }], isError: true }
+    }
+  })
+  queue = turn.catch(() => {})
+  return turn
 }
 
 server.registerTool('new_game', {
