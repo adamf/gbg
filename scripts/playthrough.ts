@@ -188,7 +188,11 @@ const ui: SessionUi = {
     if (quest && find('FORCE') >= 0 && find('LEAVE') >= 0) return find('LEAVE')
     // STAY is always the fight: the city watch's GO or RUN is the other answer.
     if (quest && find('STAY') >= 0 && labels.length === 2) return 1 - find('STAY')
-    if (quest && find('ATTACK') >= 0 && labels.length <= 3) return find('TALK') >= 0 ? find('TALK') : find('ATTACK')
+    // A small menu with ATTACK on it: talk, let the old orc touch you, anything before the blade.
+    if (quest && find('ATTACK') >= 0 && labels.length <= 3) {
+      const gentle = labels.findIndex((l) => /TALK|LET |LISTEN|ACCEPT|GIVE|WAIT/.test(l))
+      return gentle >= 0 ? gentle : find('ATTACK')
+    }
     if (quest && find('YES') === 0 && labels.length === 2) {
       const last = texts.slice(-3).join(' ')
       // No to the boat while the keep is unfinished, and never a wager or another round of dice.
@@ -404,6 +408,12 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
 }
 
+/** Which way a border square opens off the map, if it does: a level's way out, or into a building's inside. */
+function outward(c: { row: number; col: number; walls: Record<string, number>; doors: Record<string, number> }): Direction | undefined {
+  return c.row === 0 && (c.walls.north === 0 || c.doors.north) ? 'north' : c.row === 15 && (c.walls.south === 0 || c.doors.south) ? 'south'
+    : c.col === 0 && (c.walls.west === 0 || c.doors.west) ? 'west' : c.col === 15 && (c.walls.east === 0 || c.doors.east) ? 'east' : undefined
+}
+
 /** The squares of the current map the party has been wiped on, as row,col keys. */
 function deadlyHere(): ReadonlySet<string> {
   if (!quest || !session.map) return new Set()
@@ -535,7 +545,7 @@ for (let step = 0; step < STEPS; step++) {
   }
   const before = `${session.party.row},${session.party.col},${session.scriptId}`
   if (quest) {
-    if (process.env.PLAY_DEBUG && quest.phase !== 'slums') console.log(`q${step} ${quest.phase} s${session.scriptId} @${session.party.row},${session.party.col} ${session.party.facing} anteroom ${quest.anteroom} event ${session.map ? cellAt(session.map, session.party.row, session.party.col)?.event : '-'}`)
+    if (process.env.PLAY_DEBUG && quest.phase !== 'slums') console.log(`q${step} ${quest.phase} s${session.scriptId}/m${session.map?.id} @${session.party.row},${session.party.col} ${session.party.facing} anteroom ${quest.anteroom} event ${session.map ? cellAt(session.map, session.party.row, session.party.col)?.event : '-'}`)
     const cleared = mem().read(0x4abb) >= 254
     if (quest.phase === 'slums' && cleared) { quest.phase = 'city'; console.log(`step ${step}: THE SLUMS ARE CLEARED (kills counted ${mem().read(0x4a80)})`) }
     if (quest.phase === 'slums' && session.scriptId !== 20 && !session.busy) {
@@ -595,7 +605,23 @@ for (let step = 0; step < STEPS; step++) {
         const ahead = stepOf(session.party.facing)
         quest.visited.add(`${where}:${session.party.row + ahead.dRow},${session.party.col + ahead.dCol}`)
         const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${where}:${c.row},${c.col}`) && !quest.deadly.has(`${where}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
-        if (unvisited.size === 0) { quest.visited.clear(); quest.laps++; continue }
+        if (unvisited.size === 0) {
+          // Every event square seen: then off each open edge once — the Temple of Bane's
+          // inside, and many a level's neighbour, is entered by walking off the map.
+          const edges = new Set(session.map.cells.filter((c) => outward(c) && !quest.visited.has(`${where}:edge:${c.row},${c.col}`) && !quest.deadly.has(`${where}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
+          const here = cellAt(session.map, session.party.row, session.party.col)
+          const dir = here && edges.has(`${here.row},${here.col}`) ? outward(here) : undefined
+          if (dir) {
+            if (session.party.facing !== dir) { await go('turnRight', step); continue }
+            quest.visited.add(`${where}:edge:${here!.row},${here!.col}`)
+            await go('forward', step)
+            continue
+          }
+          const routed = edges.size > 0 ? routeTo(session.map, session.party, edges, step) : undefined
+          if (routed) { await go(routed, step); continue }
+          if (edges.size > 0) { quest.visited.add(`${where}:edge:${[...edges][0]}`); continue }
+          quest.visited.clear(); quest.laps++; continue
+        }
         const routed = routeTo(session.map, session.party, unvisited, step)
         if (routed) { await go(routed, step); continue }
         quest.visited.add(`${where}:${[...unvisited][0]}`)
@@ -669,9 +695,6 @@ for (let step = 0; step < STEPS; step++) {
       // Off any open edge: the keep's script offers the boat back.
       const { row, col, facing } = session.party
       const map = session.map
-      const outward = (c: { row: number; col: number; walls: Record<string, number>; doors: Record<string, number> }): Direction | undefined =>
-        c.row === 0 && (c.walls.north === 0 || c.doors.north) ? 'north' : c.row === 15 && (c.walls.south === 0 || c.doors.south) ? 'south'
-        : c.col === 0 && (c.walls.west === 0 || c.doors.west) ? 'west' : c.col === 15 && (c.walls.east === 0 || c.doors.east) ? 'east' : undefined
       const here = cellAt(map, row, col)
       const edge = here && outward(here)
       if (edge) {

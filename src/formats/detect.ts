@@ -99,7 +99,7 @@ export const MAP_NAMES: Partial<Record<GameId, Record<number, string>>> = {
     28: 'Outpost of Zhentil Keep',
     29: "Kuto's Well",
     30: 'Lizard Men Catacombs',
-    31: 'Wealthy Area',
+    31: 'Temple of Bane, Inside', // the temple's script loads it once the party is through the door
     32: "Kuto's Well Catacombs",
   },
   'curse-of-the-azure-bonds': {

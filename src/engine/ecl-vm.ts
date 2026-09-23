@@ -46,6 +46,8 @@ export const MAPPED = {
  * notes: `address = ((offset - 0x6e00) mod 0x10000) / 2`.
  */
 export const POOL_ADDRESSES = {
+  /** The map (GEO block) the party is on; the Temple of Bane's script tells inside (31) from outside (24) by it. */
+  currentMap: 0x49c5,
   timeMinutesOnes: 0x49c7,
   timeMinutesTens: 0x49c8,
   timeHour: 0x49c9,

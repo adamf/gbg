@@ -171,6 +171,7 @@ export class GameSession {
     }
     this.map = await this.library.level(ref)
     this.mapRef = ref
+    this.memory.write(POOL_ADDRESSES.currentMap, ref.id)
     this.textures = (await this.library.wallSetFor(ref)).textures
     this.levelDirty = true
     this.party = {
@@ -215,6 +216,7 @@ export class GameSession {
     // leaves the player standing somewhere.
     this.map = await this.library.level(ref)
     this.mapRef = ref
+    this.memory.write(POOL_ADDRESSES.currentMap, ref.id)
     this.textures = (await this.library.wallSetFor(ref)).textures
     this.levelDirty = true
     this.needsPlacement = true
@@ -242,6 +244,7 @@ export class GameSession {
     }
     this.map = await this.library.level(ref)
     this.mapRef = ref
+    this.memory.write(POOL_ADDRESSES.currentMap, ref.id)
     this.textures = (await this.library.wallSetFor(ref)).textures
     this.levelDirty = true
     this.ui.party(this.roster.members, this.roster.selected)
@@ -1322,6 +1325,7 @@ export class GameSession {
         if (!map) return
         this.map = map
         this.mapRef = ref
+    this.memory.write(POOL_ADDRESSES.currentMap, ref.id)
         this.levelDirty = true
       },
       loadWallSets: async (ids) => {
