@@ -18,6 +18,7 @@ import { mapName } from '../src/formats/detect.js'
 import { directorySource } from '../src/cli/node-source.js'
 import { GameLibrary } from '../src/formats/library.js'
 import { GameSession, type SessionUi } from '../src/engine/session.js'
+import { OVERLAND_STEPS, tileAt } from '../src/formats/overland.js'
 
 const [folder, stepsArg, seedArg] = process.argv.slice(2)
 if (!folder) {
@@ -79,7 +80,8 @@ type Phase = 'outfit' | 'slums' | 'city' | 'hall' | 'dock' | 'pier' | 'sokal' | 
  * The clerk's other commissions, each an area to clear and the flag its script sets
  * to 254 when it is. The walk there is a harness shortcut; the area is played.
  */
-const TARGETS: { name: string; script: number; area: number; flag?: number }[] = [
+/** `ride`: the world square the party rides to; the area is entered from it (the wilderness scripts' own tables give the squares). */
+const TARGETS: { name: string; script: number; area: number; flag?: number; ride?: { x: number; y: number } }[] = [
   { name: "Kuto's Well", script: 29, area: 8, flag: 0x4aa6 },
   { name: 'Podal Plaza', script: 18, area: 1, flag: 0x4ab0 },
   { name: "Mendor's Library", script: 15, area: 2, flag: 0x4aaa },
@@ -90,17 +92,17 @@ const TARGETS: { name: string; script: number; area: number; flag?: number }[] =
   // The rest of the game as a tour: no commission to collect, every event square once,
   // two laps, then on — so every script meets a live party.
   { name: 'Cadorna Textile House', script: 2, area: 4 },
-  { name: 'Kobold Caves', script: 13, area: 8 },
-  { name: 'Lizard Men Keep', script: 16, area: 8 },
+  { name: 'Kobold Caves', script: 13, area: 8, ride: { x: 32, y: 15 } },
+  { name: 'Lizard Men Keep', script: 16, area: 8, ride: { x: 37, y: 8 } },
   { name: 'Lizard Men Catacombs', script: 30, area: 8 },
-  { name: 'Buccaneer Base', script: 1, area: 6 },
-  { name: 'Outpost of Zhentil Keep', script: 28, area: 6 },
-  { name: 'Nomad Camp', script: 17, area: 7 },
-  { name: "Sorcerer's Island, Level 1", script: 22, area: 7 },
+  { name: 'Buccaneer Base', script: 1, area: 6, ride: { x: 12, y: 31 } },
+  { name: 'Outpost of Zhentil Keep', script: 28, area: 6, ride: { x: 3, y: 32 } },
+  { name: 'Nomad Camp', script: 17, area: 7, ride: { x: 25, y: 11 } },
+  { name: "Sorcerer's Island, Level 1", script: 22, area: 7, ride: { x: 19, y: 16 } },
   { name: "Sorcerer's Island, Levels 2 and 3", script: 23, area: 7 },
-  { name: 'Wilderness 25', script: 25, area: 6 },
-  { name: 'Wilderness 26', script: 26, area: 7 },
-  { name: 'Wilderness 27', script: 27, area: 8 },
+  { name: 'Wilderness 25', script: 25, area: 6, ride: { x: 10, y: 9 } },
+  { name: 'Wilderness 26', script: 26, area: 7, ride: { x: 20, y: 29 } },
+  { name: 'Wilderness 27', script: 27, area: 8, ride: { x: 35, y: 29 } },
   { name: 'Valjevo Castle, North West', script: 3, area: 5 },
   { name: 'Valjevo Castle, North East', script: 4, area: 5 },
   { name: 'Valjevo Castle, South West', script: 6, area: 5 },
@@ -158,6 +160,15 @@ const ui: SessionUi = {
     const labels = items.map((i) => i.toUpperCase())
     const find = (word: string) => labels.findIndex((l) => l.includes(word))
     if (find('PRESS') >= 0) return find('PRESS')
+    // Riding: the places on the way are passed by; the one ridden to is entered.
+    if (quest && session.overhead && TARGETS[quest.target]?.ride) {
+      const ride = TARGETS[quest.target]!.ride!
+      const here = session.overlandPosition
+      const there = here.worldX === ride.x && here.y === ride.y
+      if (find('NORTH') >= 0 && find('LEAVE') >= 0) return find('LEAVE')
+      for (const word of ['ENTER', 'INVESTIGATE']) if (find(word) >= 0) return there ? find(word) : Math.max(0, find('IGNORE') >= 0 ? find('IGNORE') : find('LEAVE'))
+      if (labels.length === 2 && find('YES') === 0 && there) return 0
+    }
     // Rolling a party: six of any race, first dice kept, any class, sex and alignment.
     if (prompt?.includes('ADD SOMEONE')) return prompt.startsWith('6') ? labels.length - 1 : random(labels.length - 2)
     if (find('KEEP THESE') >= 0) return find('KEEP THESE')
@@ -215,8 +226,8 @@ const ui: SessionUi = {
       if (quest.phase === 'sokal' && /BOAT BACK/.test(last)) return 1
       // Breaking in is for outside town: in Phlan it brings the watch, in the graveyard it opens the crypts.
       if (/BREAK IN/.test(last)) return session.scriptId === 0 ? 1 : 0
-      // 'Do you leave?' from a tower's spirits or a bandit's hall: the party stays and fights.
-      if (/DO YOU LEAVE\?/.test(last)) return 1
+      // 'Do you leave?' from a tower's spirits or a bandit's hall, or a cave mouth just entered: the party stays.
+      if (/DO YOU (WANT TO )?LEAVE\?/.test(last)) return 1
       if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?|CLIMB UP/.test(last)) return 1
       // A pile offered on every step over it is looked at once.
       if (/TAKE ANYTHING/.test(last) && (menuSeen.get(key) ?? 0) > 2) return 1
@@ -492,6 +503,53 @@ function deadlyHere(): ReadonlySet<string> {
 let target: { row: number; col: number; events: string; until: number } | undefined
 
 /** The first command of a shortest walk to any cell with one of the events, or nothing. */
+/** Tiles the wilderness scripts refused a step onto, learned as they refuse; the scripts' own tables are the truth. */
+const blockedTiles = new Set<number>()
+const refusedSquares = new Set<string>()
+let rideTries = 0
+/**
+ * One step of a ride: the next square of a shortest eight-way path over the world
+ * map, avoiding the tiles refused so far. Off the windows' edges is off the map.
+ */
+async function rideStep(x: number, y: number, step: number): Promise<'arrived' | 'moved' | 'refused' | 'noroute'> {
+  const map = await session.overland()
+  const from = session.overlandPosition
+  if (!map) return 'noroute'
+  if (from.worldX === x && from.y === y) return 'arrived'
+  const key = (px: number, py: number) => `${px},${py}`
+  const open = (px: number, py: number) => px >= 3 && px <= 41 && py >= 2 && py <= 33 && !blockedTiles.has(tileAt(map, px, py) ?? -1) && !refusedSquares.has(key(px, py))
+  const prev = new Map<string, number>([[key(from.worldX, from.y), -1]])
+  const queue = [{ x: from.worldX, y: from.y }]
+  let found = false
+  while (queue.length > 0 && !found) {
+    const here = queue.shift()!
+    for (const [dir, d] of OVERLAND_STEPS.entries()) {
+      const nx = here.x + d.dx, ny = here.y + d.dy
+      if (prev.has(key(nx, ny)) || !(nx === x && ny === y ? nx >= 3 && nx <= 41 && ny >= 2 && ny <= 33 : open(nx, ny))) continue
+      prev.set(key(nx, ny), dir)
+      if (nx === x && ny === y) { found = true; break }
+      queue.push({ x: nx, y: ny })
+    }
+  }
+  if (!found) return 'noroute'
+  // Walk back to the first step.
+  let cx = x, cy = y, dir = -1
+  for (;;) {
+    const d = prev.get(key(cx, cy))!
+    if (d < 0) break
+    dir = d
+    cx -= OVERLAND_STEPS[d]!.dx; cy -= OVERLAND_STEPS[d]!.dy
+  }
+  const target = { x: from.worldX + OVERLAND_STEPS[dir]!.dx, y: from.y + OVERLAND_STEPS[dir]!.dy }
+  let ok = false
+  try { ok = await withTimeout(session.moveOverland(dir), 20_000, `ride step ${step}`) } catch (e) { errors.push(String(e)) }
+  if (ok) return 'moved'
+  const tile = tileAt(map, target.x, target.y)
+  if (tile !== undefined && session.overhead) { blockedTiles.add(tile); refusedSquares.add(key(target.x, target.y)) }
+  if (process.env.PLAY_DEBUG) console.log(`step ${step}: ride refused ${dir} at ${from.worldX},${from.y} -> ${target.x},${target.y} tile ${tile?.toString(16)}`)
+  return 'refused'
+}
+
 function routeTo(map: GeoMap, from: { row: number; col: number; facing: Direction }, events: readonly number[] | ReadonlySet<string>, step: number, avoid?: ReadonlySet<number>, blocked: ReadonlySet<string> = deadlyHere()): 'forward' | 'turnLeft' | 'turnRight' | undefined {
   const key = (row: number, col: number) => `${row},${col}`
   const cells = events instanceof Set ? events : undefined
@@ -626,7 +684,7 @@ for (let step = 0; step < STEPS; step++) {
     wantTimePass = false
     if (rests === restsBefore) noCampUntil = step + 30
   }
-  const before = `${session.party.row},${session.party.col},${session.scriptId}`
+  const before = `${session.party.row},${session.party.col},${session.scriptId}${session.overhead ? `@${session.overlandPosition.worldX},${session.overlandPosition.y}` : ''}`
   if (quest) {
     if (process.env.PLAY_DEBUG && quest.phase !== 'slums') console.log(`q${step}${WATCH.map((a) => ` [${a.toString(16)}]=${mem().read(a)}`).join('')} ${quest.phase} s${session.scriptId}/m${session.map?.id} @${session.party.row},${session.party.col} ${session.party.facing} anteroom ${quest.anteroom} event ${session.map ? cellAt(session.map, session.party.row, session.party.col)?.event : '-'}`)
     const cleared = mem().read(0x4abb) >= 254
@@ -667,6 +725,22 @@ for (let step = 0; step < STEPS; step++) {
       if (quest.phase === 'collect' && (paid || quest.log.slice(-40).some((l) => /THESE ARE ALL OF THE COMMISSIONS/.test(l)) && mem().read(target.flag ?? 0) !== 254)) {
         quest.target++; quest.visited.clear(); quest.laps = 0; quest.phase = 'area'
         console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`)
+        continue
+      }
+      if (quest.phase === 'area' && target.ride && !session.busy && (session.scriptId !== target.script || session.overhead)) {
+        // Ridden to: out of Cadorna's west door into the wilderness, then across the map.
+        if (session.overhead) {
+          const result = await rideStep(target.ride.x, target.ride.y, step)
+          if (result === 'arrived') rideTries++; else if (result === 'moved') rideTries = 0
+          if (result === 'arrived' && session.scriptId === target.script) { quest.laps = 99; console.log(`step ${step}: RODE TO ${target.name} AT ${target.ride.x},${target.ride.y}`) }
+          else if (result === 'noroute' || rideTries > 6) { console.log(`step ${step}: ${target.name} CANNOT BE REACHED (${result}); NEXT ${TARGETS[quest.target + 1]?.name ?? 'nothing'}`); quest.target++; quest.visited.clear(); quest.laps = 0; rideTries = 0 }
+          continue
+        }
+        if (session.scriptId !== 2 || !session.map) { await teleport((await library.levelById(2, 4))!); continue }
+        if (session.party.row === 4 && session.party.col === 0) { await go(session.party.facing === 'west' ? 'forward' : 'turnLeft', step); continue }
+        const routed = routeTo(session.map, session.party, new Set(['4,0']), step)
+        if (routed) { await go(routed, step); continue }
+        console.log(`step ${step}: NO WAY TO CADORNA'S WEST DOOR; NEXT ${TARGETS[quest.target + 1]?.name ?? 'nothing'}`); quest.target++; quest.visited.clear(); quest.laps = 0
         continue
       }
       if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) {
@@ -882,14 +956,13 @@ for (let step = 0; step < STEPS; step++) {
     errors.push(`step ${step}: ${e instanceof Error ? e.message : String(e)}`)
     if (errors.length > 20) break
   }
-  const after = `${session.party.row},${session.party.col},${session.scriptId}`
+  const after = `${session.party.row},${session.party.col},${session.scriptId}${session.overhead ? `@${session.overlandPosition.worldX},${session.overlandPosition.y}` : ''}`
   if (process.env.PLAY_DEBUG && step < 60) console.log(`step ${step} ${command}: ${before} -> ${after} busy ${session.busy}`)
   stuck = after === before ? stuck + 1 : 0
   if (process.env.PLAY_DEBUG && stuck > 0 && stuck % 50 === 0) console.log(`step ${step}: stuck ${stuck} at ${after} facing ${session.party.facing} after ${command}; busy ${session.busy}`)
-  if (session.overhead && stuck > 12) {
-    // Outdoors the map is a shortcut away; take one so the run keeps seeing new places.
-    const options = await session.travelOptions()
-    if (options.length > 0) await session.travelTo(options[random(options.length - 1)]!.id)
+  if (session.overhead && stuck > 12 && !session.busy) {
+    // Outdoors against a mountain: ride off some other way.
+    try { await withTimeout(session.moveOverland(random(7)), 20_000, `ride at step ${step}`) } catch (e) { errors.push(String(e)) }
     stuck = 0
   }
 }

@@ -626,6 +626,9 @@ function refreshHud(state: PartyState): void {
   } else {
     overheadCanvas.classList.remove('shown')
   }
+  // Outdoors there is no dungeon to look down or to map.
+  viewCanvas.style.visibility = session?.overhead ? 'hidden' : ''
+  mapCanvas.style.visibility = session?.overhead ? 'hidden' : ''
 
   const cell = currentMap.cells[state.row * 16 + state.col]
   if (session?.overhead) {

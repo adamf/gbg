@@ -99,7 +99,11 @@ and reports what it saw and what hung; run a few seeds after touching the engine
 event square, every fight), collect from the clerk, take the harbour master's boat to
 Sokal Keep, answer its undead with the journal's words, clear it, sail home and collect
 again, then the clerk's other areas one by one, and then tours every other scripted
-level in the game two laps each (`PLAY_TARGET=<name>` starts there). It has done all of that on several seeds
+level in the game two laps each (`PLAY_TARGET=<name>` starts there), riding out of
+Cadorna's west door and across the wilderness to the places reached that way — the
+kobold caves, the lizard men's keep, the nomad camp, Sorcerer's Island, the bases
+that need their commissions — on a shortest path over the map, learning the tiles
+the scripts refuse. It has done all of that on several seeds
 with the pre-made party and with one it rolled (`PLAY_PARTY=roll`, which buys its gear
 first); with the parties `scripts/make-save.ts` writes (`PLAY_PARTY=C` at level 6, D at
 8, E at the cap; the page's NEW GAME offers each as LOAD GAME) it clears Sokal Keep, the
