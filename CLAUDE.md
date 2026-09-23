@@ -113,7 +113,8 @@ with the pre-made party and with one it rolled (`PLAY_PARTY=roll`, which buys it
 first); with the parties `scripts/make-save.ts` writes (`PLAY_PARTY=C` at level 6, D at
 8, E at the cap; the page's NEW GAME offers each as LOAD GAME) it clears Sokal Keep, the
 Temple of Bane, Stojanow Gate and Valhingen Graveyard, climbs Valjevo's tower, beats the
-audience hall's guards and Tyranthraxus, and sees the ending. The whole story runs. The clerk's office is reached through her anteroom from the south. Script commands that need
+audience hall's guards and Tyranthraxus, and sees the ending — with the wilderness
+ridden on the real map, not skipped. The whole story runs. The clerk's office is reached through her anteroom from the south. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
