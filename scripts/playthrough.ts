@@ -198,6 +198,8 @@ const ui: SessionUi = {
       // No to the boat while the keep is unfinished, and never a wager or another round of dice.
       if (quest.phase === 'sokal' && /BOAT BACK/.test(last)) return 1
       if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?|CLIMB UP|BREAK IN/.test(last)) return 1
+      // A pile offered on every step over it is looked at once.
+      if (/TAKE ANYTHING/.test(last) && (menuSeen.get(key) ?? 0) > 2) return 1
       // Stairs: once, not up and down for ever.
       if (/THESE STAIRS/.test(last)) { if (stepNow - stairsAt < 30) return 1; stairsAt = stepNow; return 0 }
       return 0
@@ -492,7 +494,7 @@ for (let step = 0; step < STEPS; step++) {
       if (at >= 0) ready(m.character, m.items, at, itemTypes)
     }
   }
-  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step}: at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}${quest ? `; ${quest.phase} laps ${quest.laps} visited ${quest.visited.size} deadly ${quest.deadly.size}` : ''}`)
+  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step} (${Date.now() - started}ms): at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}${quest ? `; ${quest.phase} laps ${quest.laps} visited ${quest.visited.size} deadly ${quest.deadly.size}` : ''}`)
   if (standing.length === 0) {
     deaths++
     if (quest && reloads >= MAX_RELOADS) { console.log(`step ${step}: OUT OF RELOADS`); break }
