@@ -458,6 +458,14 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
     refusals.set(k, (refusals.get(k) ?? 0) + 1)
     if (refusals.get(k)! >= 4) { quest.deadly.add(target); quest.bounced.add(target); refusals.delete(k); if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} refused four times; routing round it`) }
   }
+  // Carried somewhere else by the script — a teleporter, a shove — three times from
+  // the same square, and that square is routed round; the first times are the tour.
+  if (quest && command === 'forward' && after !== before && after !== target) {
+    quest.visited.add(target)
+    const k = `flash:${target}`
+    refusals.set(k, (refusals.get(k) ?? 0) + 1)
+    if (refusals.get(k)! >= 3) { quest.deadly.add(target); quest.bounced.add(target); if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} carries the party elsewhere; routing round it`) }
+  }
   bounces = open && after === before && !lockedDoor ? bounces + 1 : after !== before ? 0 : bounces
   lockedDoor = false
   if (bounces >= 3 && quest) { quest.deadly.add(target); quest.bounced.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
