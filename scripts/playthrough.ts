@@ -227,7 +227,7 @@ const ui: SessionUi = {
         stairsAt = stepNow
         return 0
       }
-      if (/THESE STAIRS/.test(last)) { if (stepNow - stairsAt < 30) return 1; stairsAt = stepNow; return 0 }
+      if (/STAIRS/.test(last)) { if (stepNow - stairsAt < 30) return 1; stairsAt = stepNow; return 0 }
       return 0
     }
     if (prompt?.startsWith('THE TEMPLE.')) {
@@ -409,6 +409,8 @@ function wantsTraining(): 'city' | 'hall' | 'shop' | undefined {
 }
 
 let bounces = 0
+/** Refused forward steps by square and facing, across whatever happened between them. */
+const refusals = new Map<string, number>()
 /** The harness's shortcut between areas; the last step is forgotten so a wipe on arrival is charged to the arrival. */
 async function teleport(ref: Awaited<ReturnType<typeof library.levelById>>): Promise<void> {
   lastStep = undefined
@@ -448,8 +450,14 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   const open = command === 'forward' && session.map !== undefined && canWalk(session.map, before.split(':')[1]!.split(',').map(Number)[0]!, before.split(':')[1]!.split(',').map(Number)[1]!, session.party.facing)
   // A turn between two refused steps does not clear the count: a door that turns the party round refuses it three times all the same.
   // A step that was refused counts the square ahead as seen: a room that throws the
-  // party out, or a door that will not open, is not tried for ever.
-  if (quest && command === 'forward' && after === before) { quest.visited.add(target); quest.visited.add(`${session.scriptId}:${target.split(':')[1]}`) }
+  // party out, or a door that will not open, is not tried for ever. Refused four times
+  // from the same square, whatever happened in between, and it is routed round.
+  if (quest && command === 'forward' && after === before) {
+    quest.visited.add(target); quest.visited.add(`${session.scriptId}:${target.split(':')[1]}`)
+    const k = `${before}>${session.party.facing}`
+    refusals.set(k, (refusals.get(k) ?? 0) + 1)
+    if (refusals.get(k)! >= 4) { quest.deadly.add(target); quest.bounced.add(target); refusals.delete(k); if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} refused four times; routing round it`) }
+  }
   bounces = open && after === before && !lockedDoor ? bounces + 1 : after !== before ? 0 : bounces
   lockedDoor = false
   if (bounces >= 3 && quest) { quest.deadly.add(target); quest.bounced.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
@@ -637,6 +645,9 @@ for (let step = 0; step < STEPS; step++) {
         continue
       }
       if (quest.phase === 'area' && session.scriptId !== target.script && !session.busy) {
+        // Walked out of the area by one of its exits: that square is seen, under the
+        // area's own key, or the walk would take the same exit for ever.
+        if (session.map) quest.visited.add(`${target.script}/${session.map.id}:${session.party.row},${session.party.col}`)
         const ref = await library.levelById(target.script, target.area)
         if (ref) await teleport(ref)
         // A level with no script of its own (the Wealthy Area) cannot be played: skip it.

@@ -56,7 +56,9 @@ export function hits(attacker: Character, defender: Character, roll: number): bo
 export function damageDice(attacker: Character): { dice: number; sides: number; bonus: number } {
   const { dice, sides, bonus } = attacker.attacks
   const plausible = dice >= 1 && dice <= 20 && sides >= 1 && sides <= 30
-  if (plausible) return { dice, sides, bonus }
+  // A bonus past twenty is not a bonus: buccaneers and third-level fighters ship
+  // with +102 in that byte (their to-hit byte's high bit is set too) and hit for 109.
+  if (plausible) return { dice, sides, bonus: bonus >= -5 && bonus <= 20 ? bonus : 0 }
   const hd = attacker.hitDice
   return { dice: 1, sides: hd <= 2 ? 4 : hd <= 5 ? 6 : hd <= 8 ? 8 : 10, bonus: 0 }
 }
