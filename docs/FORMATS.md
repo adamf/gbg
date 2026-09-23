@@ -339,9 +339,10 @@ lightning bolt, 7 a boulder, 8 a sling stone, 9 sparkles, 10 a burst, 11 a skull
 with a second frame at `+128` — for the arrows pointing the other way, for the thrown
 things another turn of the tumble, for the burst the large one.
 
-`SQRPACI.DAX` and `BACPAC.DAX` are 48×48 terrain tiles — grass, hills, mountains,
-rivers, forest — which must be the wilderness map's. The map that indexes them is
-not found yet; the wilderness scripts' overland coordinates run on it.
+`SQRPACI.DAX` is the wilderness map's 256 terrain tiles, 24×24, two blocks of 128
+— grass, hills, mountains, rivers, forest, the towns and the pyramid; `BACPAC.DAX`
+is forty more of the same size. The map that indexes them is in START.EXE — see
+below.
 
 `.SPC` files (a member's `CHRDATx.SPC`, a monster's `MON?SPC.DAX` block) are nine-byte
 records that look like the lasting effects on a character rather than spells; not read. A
@@ -522,6 +523,46 @@ file sizes do:
 | `GAME.CFG` + `CPIC.DAX` | Neverwinter Nights (AOL) |
 
 ---
+
+## The overland map — `src/formats/overland.ts`
+
+The wilderness is one map of the Moonsea's north shore, 44 columns by 36 rows, a
+byte a square naming a SQRPACI tile. It is not in any archive: it is a table in
+START.EXE's data segment, stored the way the linker packs initialised data — plain
+bytes, with a seven-byte token wherever one value repeats:
+
+```
+n(16 LE)  B2  tile  count(16 LE)  B0
+```
+
+`n` is how many plain bytes preceded the token (the reader checks it) and the run
+repeats `tile` `count` times. Only the scoured lands along the bottom are packed.
+The reader finds the table by the shape of its first row — thirteen pairs of the two
+plain grass tiles and one more — and keeps the candidate whose unpacking chains and
+ends in a full row of one tile. Verified against the DOS game's memory with the map
+loaded (the game clobbers row 5 in memory; the file's row is the real one).
+
+The three wilderness scripts each see a sixteen-column window: 25 the west
+(columns 0–15), 26 the middle (13–28), 27 the east (26–41). A script's x runs 2–15;
+walking off the east edge hands the party to the next script at x = 3, off the west
+at x = 14, so the windows overlap by three columns, and the game prints world
+coordinates (x plus the window's first column). The scripts keep the square at
+`0x49C3`/`0x49C4`, the compass at `0x033D` (0 north, clockwise), and vet a step
+themselves: the move entry copies the square to `0x00FB`/`0x00FC`, moves it by the
+compass, and `CALL 0xC01B` answers with the tile there in `0x035F`, which the script
+compares against its own table of impassable tiles (`0x6DC9` = 255 cancels). `CALL
+0xC018` plants the tile in `0x00B1` at the work square — how a base stays hidden
+until the party has heard of it. An hour passes a square. The wilderness events are
+found by the script's own coordinate tables, not by a GEO event plane; the GEO
+block a wilderness script's `LOAD FILES` names is the cave or grove the party can
+enter from it.
+
+Two more globals a DOS save must carry to load in the original: `0x6E12` is the area
+number the engine names its files by (the scripts set it before `NEW ECL`), and
+`0x4AFA`–`0x4AFC` are the three wall-set block ids in play, which the original
+reloads from the area's WALLDEF on a load (−1 for none; 0 when block 0 holds all
+three). A save that names another area's wall sets stops with "Unable to load
+wallset in LoadWallSet."
 
 ## Not implemented
 

@@ -64,6 +64,18 @@ export const POOL_ADDRESSES = {
   scratchEnd: 0x4a20,
   /** Set when the party walks off the map's edge; the per-step code sends them to the next area. */
   triedToExit: 0x6dd5,
+  /** The area number the original names its files by (coab's area2 game_area); the scripts set it before NEW ECL. */
+  gameArea: 0x6e12,
+  /** The three wall-set block ids in play; the original reloads them from the area's WALLDEF on a load (−1 = none, 0 = the area's block 0 holds all three). */
+  wallSets: 0x4afa,
+  /** Overland: the party's square in the wilderness script's window, x then y. */
+  overlandX: 0x49c3,
+  overlandY: 0x49c4,
+  /** Overland scratch the scripts compute a step into, and CALL 0xC01B/0xC018 read: x, y, the tile found, the tile to plant. */
+  overlandWorkX: 0x00fb,
+  overlandWorkY: 0x00fc,
+  overlandTerrain: 0x035f,
+  overlandPlant: 0x00b1,
   /** 255 from the per-step code means the move the party asked for does not happen. */
   moveCancelled: 0x6dc9,
   /** Resting: a check every this many hours, and the chance of an interruption. */
@@ -92,6 +104,9 @@ export const POOL_ADDRESSES = {
 /** What the party is doing in the world, for the mapped addresses. */
 export interface VmWorld {
   position: { row: number; col: number; facing: number }
+  /** The eight-point compass the wilderness steers by: 0 north, clockwise. Indoors it is the facing doubled. */
+  compass: number
+  setCompass(compass: number): void
   setPosition(row: number, col: number): void
   setFacing(facing: number): void
   /** Wall type of the wall directly ahead, 0 when open. */
@@ -154,7 +169,7 @@ export class EclMemory {
         case MAPPED.positionX: return world.position.col
         case MAPPED.positionY: return world.position.row
         case MAPPED.facing: return world.position.facing & 3
-        case MAPPED.facingRaw: return (world.position.facing & 3) * 2
+        case MAPPED.facingRaw: return world.compass & 7
         case MAPPED.wallAhead: return world.wallAhead()
         case MAPPED.cellEvent: return world.cellEvent()
       }
@@ -174,7 +189,7 @@ export class EclMemory {
         case MAPPED.positionX: world.setPosition(world.position.row, value & 0xff); return
         case MAPPED.positionY: world.setPosition(value & 0xff, world.position.col); return
         case MAPPED.facing: world.setFacing(value & 3); return
-        case MAPPED.facingRaw: world.setFacing((value >> 1) & 3); return
+        case MAPPED.facingRaw: world.setCompass(value & 7); return
       }
     }
     if (this.character && address >= SELECTED_CHARACTER_BASE && address < SELECTED_CHARACTER_BASE + SELECTED_CHARACTER_SPAN) {
@@ -369,7 +384,10 @@ export const CALL_QUIET = new Set([0x0806, 0x2c51, 0x2c4e, 0xc009, 0xc003])
  * a grid larger than the map; these calls committed them. Here the party walks the
  * map it is on and the calls only redraw.
  */
-export const CALL_WILD = new Set([0xc018, 0xc01b])
+/** Wilderness: 0xC01B reads the tile at the work square into overlandTerrain; 0xC018 plants overlandPlant there. */
+export const CALL_TERRAIN = 0xc01b
+export const CALL_PLANT = 0xc018
+export const CALL_WILD = new Set([CALL_PLANT, CALL_TERRAIN])
 
 const MAX_STEPS = 200_000
 

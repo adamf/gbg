@@ -17,6 +17,8 @@ import { drawBattle, playEffects, SQUARE, viewport, type BattleArt } from './bat
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { drawMinimap } from './minimap.js'
+import { drawOverland } from './overland-view.js'
+import type { OverlandMap } from '../formats/overland.js'
 
 const el = <T extends HTMLElement>(id: string): T => {
   const found = document.getElementById(id)
@@ -593,27 +595,47 @@ async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
   viewer.resize()
   viewer.start()
 
+  overlandArt = undefined
   session = new GameSession(lib, pageUi)
   // Reachable from the console in development, for poking at the running game.
   if (import.meta.env.DEV) (window as unknown as { gbg?: unknown }).gbg = { session, library: lib }
   return session
 }
 
+/** The wilderness art, loaded once per folder. */
+let overlandArt: { map: OverlandMap | undefined; tiles: readonly Rgba[]; rider: Rgba | undefined } | undefined
+async function loadOverlandArt(current: GameSession): Promise<void> {
+  const lib = library
+  if (!lib || overlandArt) return
+  const [map, tiles, rider] = await Promise.all([current.overland(), lib.overlandTiles(), lib.ridingIcon(0)])
+  overlandArt = { map, tiles, rider }
+  if (session === current) refreshHud(current.party)
+}
+
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+
 function refreshHud(state: PartyState): void {
   if (!currentMap) return
   drawMinimap(mapCanvas, currentMap, state)
   // Outdoors the map itself is the view.
   if (session?.overhead) {
-    drawMinimap(overheadCanvas, currentMap, state)
+    if (!overlandArt) void loadOverlandArt(session)
+    const { worldX, y } = session.overlandPosition
+    if (overlandArt?.map) drawOverland(overheadCanvas, overlandArt.map, overlandArt.tiles, overlandArt.rider, worldX, y)
     overheadCanvas.classList.add('shown')
   } else {
     overheadCanvas.classList.remove('shown')
   }
 
   const cell = currentMap.cells[state.row * 16 + state.col]
-  whereLine.textContent =
-    `${state.row},${state.col} · ${state.facing}` +
-    (cell && cell.event !== 0 ? ` · event ${cell.event}` : '')
+  if (session?.overhead) {
+    const { worldX, y, facing } = session.overlandPosition
+    whereLine.textContent = `${worldX},${y} · ${COMPASS[facing]}`
+  } else {
+    whereLine.textContent =
+      `${state.row},${state.col} · ${state.facing}` +
+      (cell && cell.event !== 0 ? ` · event ${cell.event}` : '')
+  }
 
   if (session) {
     const { hour, minute } = session.time
@@ -724,24 +746,11 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
-  if (event.code === 'KeyT' && session && !session.busy && session.overhead) {
-    event.preventDefault()
-    const current = session
-    void current.travelOptions().then(async (options) => {
-      if (options.length === 0) {
-        pageUi.print('THERE IS NOWHERE TO TRAVEL FROM HERE.', true)
-        return
-      }
-      const pick = await pageUi.menu('TRAVEL TO:', [...options.map((o) => o.name.toUpperCase()), 'STAY'], 'vertical')
-      const chosen = options[pick]
-      if (chosen) await current.travelTo(chosen.id)
-    })
-    return
-  }
-
   const command = KEY_COMMANDS[event.code]
   if (!command || !session || session.busy) return
   event.preventDefault()
+  // Outdoors the same keys ride: turns swing the compass, steps take an hour a square.
+  if (session.overhead) { void session.move(command); return }
   // One step at a time: the viewer animates each, and the session stays in step with it.
   if (viewer?.isMoving) return
 

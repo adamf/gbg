@@ -222,6 +222,8 @@ describe('the outside world', () => {
       position: { row: 4, col: 7, facing: 1 },
       setPosition(row, col) { this.position = { ...this.position, row, col } },
       setFacing(facing) { this.position = { ...this.position, facing } },
+      get compass() { return this.position.facing * 2 },
+      setCompass(compass) { this.position = { ...this.position, facing: (compass >> 1) & 3 } },
       wallAhead: () => 3,
       cellEvent: () => 0x85,
       distanceAhead: () => 0,

@@ -67,10 +67,13 @@ one server-side, or check a `.DAX` into git is the wrong change.
   backstab for double; monsters badly hurt or half down check morale and may run,
   paying nothing.
 
-- **Outdoors** — when a script clears the in-dungeon word the map is shown from above
-  and a square takes an hour; the wilderness blocks (25 to 27) carry their own
-  encounters. The scripts' overland coordinates run on a larger grid whose data is not
-  yet found, so they stay plain memory and the party walks the map it is on.
+- **Outdoors** — the wilderness is the original's one 44×36 map of the Moonsea's
+  shore, read out of START.EXE's packed data and drawn from the SQRPACI tiles with
+  the riders' icon on the party's square; the three wilderness scripts see it
+  through sixteen-column windows and vet each of the eight-way steps against their
+  own impassable-tile tables through CALL 0xC01B, plant tiles with CALL 0xC018, and
+  hand the party across their edges. The movement keys ride: turns swing the
+  compass an eighth, a square takes an hour.
 - **Monsters that shoot and cast** — from the same gear and books the party uses. The
   computer's own party (QUICK, and the bot) memorises fireballs and holds first, casts the
   spell worth most against what stands there, strikes the held and sleeping first, and
@@ -78,19 +81,16 @@ one server-side, or check a `.DAX` into git is the wrong change.
 
 - **The rest a run needs** — NPCs join by ADD NPC, thieves ROB, SPELL and CHECK PARTY
   answer from the party, clerics turn undead (T in a fight), potions and wands are used
-  (U in a fight, USE at camp), T outdoors travels to any area the wilderness script
-  names, and PROGRAM 8 shows the closing pictures.
+  (U in a fight, USE at camp), and PROGRAM 8 shows the closing pictures.
 - **Scrolls** — a Magic User or Clerical Scroll carries up to three spells in its
   affect bytes; a caster of its class reads one (USE, at camp or in a fight) at
   sixth level or their own, and a magic-user can SCRIBE one into the book at camp.
 - **DOS saves** — camp's EXPORT writes SAVGAMB.DAT and CHRDATB1–6 in the original's
-  formats, with the bytes this program does not model carried through from the read.
+  formats, with the bytes this program does not model carried through from the read;
+  the original loads them (checked in DOSBox), which needs the area word and the
+  wall-set ids kept in the globals.
 
-Not here yet: the overland map the wilderness scripts count squares on (T's travel
-menu stands in for it; the three wilderness scripts are sixteen-by-thirty-two regions
-handed across their edges, the terrain read by the engine's own CALLs 0xC018 and
-0xC01B, and no data file holds it) and monsters' special attacks as data rather than by
-name.
+Not here yet: monsters' special attacks as data rather than by name.
 `scripts/soak.ts` random-walks every level headlessly and prints what the scripts
 trip over; run it after touching the interpreter. `scripts/playthrough.ts` plays
 the game for thousands of steps with a seeded party — menus, fights, camp, training —

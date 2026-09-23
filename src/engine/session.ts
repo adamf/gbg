@@ -12,9 +12,10 @@ import { decodeEcl, memStartFor, type EclProgram } from '../formats/ecl.js'
 import type { Rgba } from '../formats/ega.js'
 import { canWalk, cellAt, DIRECTIONS, type Direction, type GeoMap } from '../formats/geo.js'
 import type { GameLibrary, LevelRef, SavedGame } from '../formats/library.js'
+import { OVERLAND_STEPS, tileAt, windowColumn, type OverlandMap } from '../formats/overland.js'
 import { startingCell, startingFacing } from './dungeon.js'
 import {
-  CALL_DUEL, CALL_QUIET, CALL_SPAR, CALL_REDRAW, CALL_WILD, CALL_SOUND, CALL_STEP_FORWARD, EclMemory, EclVm, POOL_ADDRESSES,
+  CALL_DUEL, CALL_PLANT, CALL_QUIET, CALL_SPAR, CALL_REDRAW, CALL_SOUND, CALL_STEP_FORWARD, CALL_TERRAIN, EclMemory, EclVm, MAPPED, POOL_ADDRESSES,
   type CombatOutcome, type EclHost, type EncounterView, type MonsterGroup, type VmWorld,
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
@@ -126,6 +127,8 @@ export class GameSession {
   /** True only when a level was picked from the list: the party has nowhere to stand yet. */
   private needsPlacement = false
   private running = false
+  /** The eight-point compass outdoors; see VmWorld.compass. */
+  private compass = 0
   /** Set by a duel CALL: the next fight is this member alone. */
   private champion: Member | undefined
   /** The monsters of the last fight, for the result words the scripts read. */
@@ -151,6 +154,7 @@ export class GameSession {
     this.memory.loadWords(POOL_ADDRESSES.areaScratchBase, saved.areaScratch)
     this.memory.loadWords(POOL_ADDRESSES.extraBase, saved.extra)
     this.area = saved.area
+    this.memory.write(POOL_ADDRESSES.gameArea, this.area)
   }
 
   /**
@@ -211,6 +215,7 @@ export class GameSession {
     const program = await this.library.eclForLevel(ref)
     const blockId = program?.blockId ?? ref.id
     this.area = Number(ref.file.match(/\d+/)?.[0] ?? 1)
+    this.memory.write(POOL_ADDRESSES.gameArea, this.area)
 
     // Loaded here, before the script, so a script that never says LOAD FILES still
     // leaves the player standing somewhere.
@@ -235,6 +240,7 @@ export class GameSession {
     this.pool = structuredClone(snapshot.pool ?? emptyPool())
     await this.armRanges()
     this.area = snapshot.area
+    this.memory.write(POOL_ADDRESSES.gameArea, this.area)
     this.party = snapshot.party
     this.positionSetByScript = true
     const ref = await this.library.levelById(snapshot.mapId, this.area)
@@ -419,6 +425,57 @@ export class GameSession {
     return this.memory.read(POOL_ADDRESSES.inDungeon) === 0
   }
 
+  /** The wilderness map as this game has changed it (scripts plant tiles); a copy of the folder's. */
+  private overlandCopy?: OverlandMap
+  async overland(): Promise<OverlandMap | undefined> {
+    if (!this.overlandCopy) {
+      const map = await this.library.overland()
+      if (map) this.overlandCopy = { ...map, tiles: new Uint8Array(map.tiles) }
+    }
+    return this.overlandCopy
+  }
+
+  /** Where the party rides: the script's own square, the world column it maps to, and the compass point (0 north, clockwise). */
+  get overlandPosition(): { x: number; y: number; worldX: number; facing: number } {
+    const x = this.memory.read(POOL_ADDRESSES.overlandX)
+    const y = this.memory.read(POOL_ADDRESSES.overlandY)
+    return { x, y, worldX: x + windowColumn(this.blockId), facing: this.memory.read(MAPPED.facingRaw) & 7 }
+  }
+
+  /**
+   * A step outdoors in one of the eight directions. The wilderness script's move
+   * entry vets it — the terrain table, the window's edges, a hand-over to the next
+   * script — and the step lands when it does not cancel; then the square's script
+   * runs, as after any step. An hour passes a square. Returns false when refused.
+   */
+  async moveOverland(direction: number): Promise<boolean> {
+    if (this.running || !this.program || !this.overhead) return false
+    const step = OVERLAND_STEPS[direction & 7]!
+    const script = this.blockId
+    const before = this.overlandPosition
+    this.memory.write(MAPPED.facingRaw, direction & 7)
+    this.memory.write(POOL_ADDRESSES.moveCancelled, 0)
+    let left = false
+    await this.withScript(async () => { left = await this.runEntry(this.program!.entryPoints.vmRun) })
+    if (left || this.blockId !== script || !this.overhead) { this.ui.showParty(this.party); return true }
+    if (this.memory.read(POOL_ADDRESSES.moveCancelled) === 255) {
+      this.memory.write(POOL_ADDRESSES.moveCancelled, 0)
+      await this.withScript(async () => { await this.runEntry(this.program!.entryPoints.searchLocation) })
+      this.ui.showParty(this.party)
+      return false
+    }
+    this.memory.write(POOL_ADDRESSES.overlandX, before.x + step.dx)
+    this.memory.write(POOL_ADDRESSES.overlandY, before.y + step.dy)
+    this.advanceTime(60)
+    this.ui.showParty(this.party)
+    await this.withScript(async () => {
+      if (await this.runEntry(this.program!.entryPoints.searchLocation)) return
+      this.memory.write(POOL_ADDRESSES.lastEclBlock, this.blockId)
+    })
+    this.ui.showParty(this.party)
+    return true
+  }
+
   get searching(): boolean {
     return (this.memory.read(POOL_ADDRESSES.searchFlags) & 1) !== 0
   }
@@ -443,8 +500,23 @@ export class GameSession {
     this.memory.write(POOL_ADDRESSES.searchFlags, this.memory.read(POOL_ADDRESSES.searchFlags) & ~2)
   }
 
+  /** The dungeon keys outdoors: turns swing the compass an eighth, steps ride that way. */
+  private async ride(command: MoveCommand): Promise<boolean> {
+    if (this.running) return false
+    const facing = this.memory.read(MAPPED.facingRaw) & 7
+    const turn = command === 'turnLeft' ? 7 : command === 'turnRight' ? 1 : command === 'turnAround' ? 4 : undefined
+    if (turn !== undefined) {
+      this.memory.write(MAPPED.facingRaw, (facing + turn) & 7)
+      this.ui.showParty(this.party)
+      return true
+    }
+    const offset = command === 'back' ? 4 : command === 'left' ? 6 : command === 'right' ? 2 : 0
+    return this.moveOverland((facing + offset) & 7)
+  }
+
   /** A movement key. Turns are free; steps run the script when they land. */
   async move(command: MoveCommand): Promise<boolean> {
+    if (this.overhead) return this.ride(command)
     if (this.running || !this.map) return false
     const map = this.map
 
@@ -531,6 +603,7 @@ export class GameSession {
     this.program = decodeEcl(blockId, found.data, memStart)
     this.blockId = blockId
     this.area = found.area
+    this.memory.write(POOL_ADDRESSES.gameArea, this.area)
 
     // A freshly loaded script starts with clean scratch, as the original's init did.
     this.memory.clearWords(POOL_ADDRESSES.scratchStart, POOL_ADDRESSES.scratchEnd)
@@ -1259,6 +1332,16 @@ export class GameSession {
       get position() {
         return { row: session.party.row, col: session.party.col, facing: DIRECTIONS.indexOf(session.party.facing) }
       },
+      get compass() {
+        return session.overhead ? session.compass : DIRECTIONS.indexOf(session.party.facing) * 2
+      },
+      setCompass(compass) {
+        session.compass = compass & 7
+        // Indoors the same word is the facing doubled; keep the two in step.
+        session.party = { ...session.party, facing: DIRECTIONS[(compass >> 1) & 3] as Direction }
+        session.positionSetByScript = true
+        session.ui.showParty(session.party)
+      },
       setPosition(row, col) {
         session.party = { ...session.party, row: row & 0x0f, col: col & 0x0f }
         session.positionSetByScript = true
@@ -1345,6 +1428,9 @@ export class GameSession {
       loadWallSets: async (ids) => {
         // 127 was the original's way of saying "block 0 of this area's file".
         const wanted = ids.map((id) => (id === 0x7f ? 0 : id))
+        // What a DOS save must carry: the original reloads these from WALLDEF<area> on a load.
+        const stored = ids[0] === 0x7f ? [0, 0xffff, 0xffff] : wanted
+        stored.forEach((id, i) => this.memory.write(POOL_ADDRESSES.wallSets + i, id))
         this.textures = (await this.library.wallSetFromIds(wanted, this.area)).textures
         this.levelDirty = true
         // Show the level now rather than when the script finishes: it may be about
@@ -1362,9 +1448,24 @@ export class GameSession {
             this.champion = this.roster.members[index]
             return
           }
+          case CALL_TERRAIN: {
+            const map = await this.overland()
+            const x = this.memory.read(POOL_ADDRESSES.overlandWorkX) + windowColumn(this.blockId)
+            const y = this.memory.read(POOL_ADDRESSES.overlandWorkY)
+            // Off the map reads as nothing the scripts list, so the edge scripts' own checks decide.
+            this.memory.write(POOL_ADDRESSES.overlandTerrain, map ? (tileAt(map, x, y) ?? 0) : 0)
+            return
+          }
+          case CALL_PLANT: {
+            const map = await this.overland()
+            const x = this.memory.read(POOL_ADDRESSES.overlandWorkX) + windowColumn(this.blockId)
+            const y = this.memory.read(POOL_ADDRESSES.overlandWorkY)
+            if (map && tileAt(map, x, y) !== undefined) map.tiles[y * map.width + x] = this.memory.read(POOL_ADDRESSES.overlandPlant) & 0xff
+            ui.showParty(this.party)
+            return
+          }
           default:
-            if (CALL_WILD.has(id)) ui.showParty(this.party)
-            else if (!CALL_QUIET.has(id)) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
+            if (!CALL_QUIET.has(id)) ui.note(`CALL 0x${id.toString(16)} is not implemented`)
         }
       },
       program: async (id) => {

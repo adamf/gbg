@@ -14,6 +14,7 @@ import { readCharacter, readItems, type Character, type Item } from './character
 import { readItemNames, readItemTypes, type ItemType } from './items.js'
 import { readSpellNames } from './spells.js'
 import { detectGame, mapName, type GameInfo } from './detect.js'
+import { readOverland, type OverlandMap } from './overland.js'
 import { readGeoMap, type GeoMap } from './geo.js'
 import { decodeAnyImage, decodeImageBlock, isImageBlock, type DecodedImage } from './image.js'
 import { readWallDefBlock, renderWallTexture, type WallDef } from './walldef.js'
@@ -366,6 +367,22 @@ export class GameLibrary {
     const icon: Rgba = { width: body.width, height: body.height, pixels: new Uint8ClampedArray(body.pixels) }
     if (head) blit(icon, head, 0, 0)
     return recolour(icon, character.iconColours)
+  }
+
+  /** The overland map, from START.EXE; nothing when the folder has no readable one. */
+  overland(): Promise<OverlandMap | undefined> {
+    this.overlandCache ??= this.source.read('START.EXE').then((data) => (data ? readOverland(data) : undefined))
+    return this.overlandCache
+  }
+  private overlandCache?: Promise<OverlandMap | undefined>
+
+  /** The 256 wilderness tiles of SQRPACI.DAX, in index order (two blocks of 128). */
+  async overlandTiles(): Promise<Rgba[]> {
+    const archive = await this.archive('SQRPACI.DAX')
+    if (!archive) return []
+    const tiles: Rgba[] = []
+    for (const block of [...archive.blocks].sort((a, b) => a.id - b.id)) tiles.push(...(decodeAnyImage(block.data, 'SQRPACI.DAX')?.frames ?? []))
+    return tiles
   }
 
   /** The party on horseback, for the wilderness map; block id + 128 is the second frame. */
