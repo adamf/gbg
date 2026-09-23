@@ -85,6 +85,11 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **Scrolls** — a Magic User or Clerical Scroll carries up to three spells in its
   affect bytes; a caster of its class reads one (USE, at camp or in a fight) at
   sixth level or their own, and a magic-user can SCRIBE one into the book at camp.
+- **Headless play** — `src/headless/driver.ts` runs a session with no page: every
+  prompt queues for the caller and the state is a plain object. `npm run headless --
+  <folder>` is that as a JSON-lines conversation on stdin/stdout, and `npm run mcp --
+  <folder>` serves the same over MCP (stdio), one tool a command, so an agent can
+  play at any speed.
 - **DOS saves** — camp's EXPORT writes SAVGAMB.DAT and CHRDATB1–6 in the original's
   formats, with the bytes this program does not model carried through from the read;
   the original loads them (checked in DOSBox), which needs the area word and the
@@ -167,6 +172,7 @@ npm run inspect -- /path/to/game     # what a folder holds
 npm run inspect -- /path/to/game ECL1.DAX 1   # disassemble a script
 npm run dump -- /path/to/game ./out  # extract everything
 npm run make-save -- /path/to/game C 6   # a sixth-level party as SAVGAMC.DAT, for testing the late game
+npm run headless -- /path/to/game        # play by JSON lines on stdin; npm run mcp -- /path/to/game serves MCP
 ```
 
 `.github/workflows/ci.yml` typechecks, tests and builds on every branch but main.

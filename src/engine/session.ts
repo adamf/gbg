@@ -116,6 +116,8 @@ export class GameSession {
   private blockId = 0
   /** The area number: which ECL, GEO and PIC files this script lives in. */
   private area = 1
+  /** The area number: which ECL, GEO, PIC and SPRIT files are current. */
+  get areaId(): number { return this.area }
 
   map: GeoMap | undefined
   mapRef: LevelRef | undefined
@@ -216,6 +218,8 @@ export class GameSession {
     const blockId = program?.blockId ?? ref.id
     this.area = Number(ref.file.match(/\d+/)?.[0] ?? 1)
     this.memory.write(POOL_ADDRESSES.gameArea, this.area)
+    // Arriving at a level is arriving indoors: the scripts that hand over from the wilderness say so themselves.
+    this.memory.write(POOL_ADDRESSES.inDungeon, 1)
 
     // Loaded here, before the script, so a script that never says LOAD FILES still
     // leaves the player standing somewhere.
