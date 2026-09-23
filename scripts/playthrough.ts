@@ -46,6 +46,7 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+let searchUntil = -1
 /** Set by a won fight: the next quiet moment is saved, as a Gold Box player saves after every fight. */
 let saveSoon = false
 let stairsAt = -100
@@ -213,6 +214,16 @@ const ui: SessionUi = {
       // A pile offered on every step over it is looked at once.
       if (/TAKE ANYTHING/.test(last) && (menuSeen.get(key) ?? 0) > 2) return 1
       // Stairs: once, not up and down for ever.
+      // In Valjevo's inner tower the stairs down lead out of it; the way to Tyranthraxus is up.
+      // In Valjevo's inner tower the stairs are the way between its floors; only the ones
+      // on the entry square (its event 1) lead back out of it.
+      if (/THESE STAIRS/.test(last) && session.scriptId === 7) {
+        const here = session.map && cellAt(session.map, session.party.row, session.party.col)
+        if (/DOWN/.test(last) && here?.event === 1) return 1
+        if (stepNow - stairsAt < 12) return 1
+        stairsAt = stepNow
+        return 0
+      }
       if (/THESE STAIRS/.test(last)) { if (stepNow - stairsAt < 30) return 1; stairsAt = stepNow; return 0 }
       return 0
     }
@@ -418,11 +429,17 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   // searching. Once more with the search on, as a player would.
   const [r0, c0] = before.split(':')[1]!.split(',').map(Number) as [number, number]
   if (quest && command === 'forward' && after === before && !lockedDoor && !session.searching && session.map && canWalk(session.map, r0, c0, session.party.facing) && !session.busy) {
-    session.toggleSearch()
-    if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: refused at ${before} facing ${session.party.facing}; once more searching`)
-    try { await withTimeout(session.move('forward'), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
-    if (session.searching) session.toggleSearch()
-    after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+    if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: refused at ${before} facing ${session.party.facing}; searching here`)
+    // Searching runs the square's script at once, and a secret door is found by a roll
+    // per character: a few looks, a step after each, before giving the way up.
+    try { await withTimeout(session.toggleSearch(), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
+    for (let look = 0; look < 6 && after === before; look++) {
+      if (look > 0) { try { await withTimeout(session.look(), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) } }
+      try { await withTimeout(session.move('forward'), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
+      after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+    }
+    if (after === before) searchUntil = step + 120
+    else if (session.searching) await session.toggleSearch()
   }
   // Only a step the map allows counts as a bounce; walking into a wall is the bot's own doing.
   const open = command === 'forward' && session.map !== undefined && canWalk(session.map, before.split(':')[1]!.split(',').map(Number)[0]!, before.split(':')[1]!.split(',').map(Number)[1]!, session.party.facing)
@@ -599,7 +616,7 @@ for (let step = 0; step < STEPS; step++) {
       const target = TARGETS[quest.target]
       if (!target) { quest.phase = 'done'; console.log(`step ${step}: EVERY TARGET TRIED`); break }
       const cleared = target.flag !== undefined && mem().read(target.flag) >= 254
-      if (quest.phase === 'area' && (cleared || quest.laps >= (target.script === 15 || target.script === 10 ? 8 : target.flag === undefined ? 2 : 3))) {
+      if (quest.phase === 'area' && (cleared || quest.laps >= (target.script === 15 || target.script === 10 || target.script === 7 ? 8 : target.flag === undefined ? 2 : 3))) {
         console.log(`step ${step}: ${target.name} ${cleared ? 'IS CLEARED' : `${target.flag === undefined ? 'TOURED' : 'GIVEN UP'} AFTER ${quest.laps} LAPS`}${target.flag !== undefined ? ` (flag ${mem().read(target.flag)})` : ''}`)
         if (target.flag === undefined) { quest.target++; quest.visited.clear(); quest.laps = 0; console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`); continue }
         quest.phase = 'collect'; quest.anteroom = false
@@ -625,7 +642,7 @@ for (let step = 0; step < STEPS; step++) {
       if (quest.phase === 'area' && session.map && !session.busy) {
         // Mendor's books turn up only while searching the stacks; searching anywhere
         // else is slow going and wakes more wandering monsters.
-        if (session.searching !== (target.script === 15)) session.toggleSearch()
+        if (session.searching !== (target.script === 15 || step < searchUntil)) await session.toggleSearch()
         // Keyed by map as well as script: Kuto's Well is two maps under one script.
         const where = `${session.scriptId}/${session.map.id}`
         quest.visited.add(`${where}:${session.party.row},${session.party.col}`)

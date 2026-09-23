@@ -423,10 +423,15 @@ export class GameSession {
     return (this.memory.read(POOL_ADDRESSES.searchFlags) & 1) !== 0
   }
 
-  /** Searching: slower going, and the scripts show what a careful party finds. */
-  toggleSearch(): void {
+  /**
+   * Searching: slower going, and the scripts show what a careful party finds. Turning
+   * it on runs the square's script at once, as the original did (coab's 3D loop), so a
+   * secret door where the party stands can be found without stepping off.
+   */
+  async toggleSearch(): Promise<void> {
     const flags = this.memory.read(POOL_ADDRESSES.searchFlags)
     this.memory.write(POOL_ADDRESSES.searchFlags, flags ^ 1)
+    if ((flags & 1) === 0 && !this.running && this.program) await this.withScript(() => this.afterStep())
   }
 
   /** Looking: the square's script runs again with the looking bit set. */
@@ -469,8 +474,14 @@ export class GameSession {
     if (leaving) this.memory.write(POOL_ADDRESSES.triedToExit, 0)
     const refused = this.memory.read(POOL_ADDRESSES.moveCancelled) === 255
     const moved = this.party.row !== was.row || this.party.col !== was.col
-    if (left || refused || moved || this.blockId !== script) return true
-    if (!result.moved) return true
+    if (left || this.blockId !== script) return true
+    if (refused || moved || !result.moved) {
+      // Refused, or carried elsewhere by the script (stairs, a guard's shove): the
+      // square the party now stands on is searched all the same — only NEW ECL
+      // stops the original's step short of that (coab ovr003).
+      await this.withScript(async () => { await this.runEntry(this.program!.entryPoints.searchLocation) })
+      return true
+    }
 
     this.party = result.state
     // A wilderness square is a long way; a searched dungeon square is slow going.
