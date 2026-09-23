@@ -46,6 +46,8 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+/** Set by a won fight: the next quiet moment is saved, as a Gold Box player saves after every fight. */
+let saveSoon = false
 let stairsAt = -100
 let stepNow = 0
 let restTries = 0
@@ -101,7 +103,7 @@ const TARGETS: { name: string; script: number; area: number; flag?: number }[] =
 ]
 // PLAY_TARGET names an area to start the tour at, the earlier story skipped: for testing one area.
 const startTarget = process.env.PLAY_TARGET ? TARGETS.findIndex((t) => t.name.toLowerCase().includes(process.env.PLAY_TARGET!.toLowerCase())) : -1
-const quest = process.env.PLAY_QUEST ? { phase: (startTarget >= 0 ? 'area' : process.env.PLAY_PARTY === 'roll' ? 'outfit' : 'slums') as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: Math.max(0, startTarget), laps: 0, rewards: 0 } : undefined
+const quest = process.env.PLAY_QUEST ? { phase: (startTarget >= 0 ? 'area' : process.env.PLAY_PARTY === 'roll' ? 'outfit' : 'slums') as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), bounced: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: Math.max(0, startTarget), laps: 0, rewards: 0 } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
@@ -122,7 +124,7 @@ const ui: SessionUi = {
   showLevel: () => {},
   showParty: () => {},
   print: (text) => {
-    if (text.includes('EACH SURVIVOR GAINS')) wins++
+    if (text.includes('EACH SURVIVOR GAINS')) { wins++; saveSoon = true }
     if (text.includes('THE PARTY HAS FALLEN')) losses++
     if (text.includes('THE PARTY RESTS')) rests++
     // A locked door is the hour, not the square: rest until it opens, and hold no grudge against the square.
@@ -430,7 +432,7 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   if (quest && command === 'forward' && after === before) { quest.visited.add(target); quest.visited.add(`${session.scriptId}:${target.split(':')[1]}`) }
   bounces = open && after === before && !lockedDoor ? bounces + 1 : after !== before ? 0 : bounces
   lockedDoor = false
-  if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
+  if (bounces >= 3 && quest) { quest.deadly.add(target); quest.bounced.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
 }
 
 /** Which way a border square opens off the map, if it does: a level's way out, or into a building's inside. */
@@ -537,15 +539,17 @@ for (let step = 0; step < STEPS; step++) {
       reloads++
       if (process.env.PLAY_DEBUG) console.log(`step ${step}: WIPED (${members.map((m) => `${m.character.name} ${m.character.status} ${m.character.hpCurrent}`).join(', ')}); reloading`)
       await session.load(checkpoint)
-      if (quest && questCheckpoint) { Object.assign(quest, { ...questCheckpoint, log: [...questCheckpoint.log], visited: new Set<string>() }); if (process.env.PLAY_DEBUG) console.log(`step ${step}: restored phase ${quest.phase} target ${quest.target} laps ${quest.laps}`) }
+      if (quest && questCheckpoint) { Object.assign(quest, { ...questCheckpoint, log: [...questCheckpoint.log], visited: new Set<string>() }); if (process.env.PLAY_DEBUG) console.log(`step ${step}: restored phase ${quest.phase} target ${quest.target} laps ${quest.laps} at s${session.scriptId}/m${session.map?.id} @${session.party.row},${session.party.col}${WATCH.map((a) => ` [${a.toString(16)}]=${mem().read(a)}`).join('')}`) }
       for (const m of session.roster.members) { m.character.hpCurrent = m.character.hpMax }
       continue
     }
     for (const m of members) { m.character.status = 'okay'; m.character.statusByte = 0; m.character.hpCurrent = m.character.hpMax }
   }
   // Saved the way Gold Box players save: often, whenever everyone is on their feet.
-  if (process.env.PLAY_DEBUG && step % 25 === 0 && standing.length !== members.length) console.log(`step ${step}: no checkpoint: ${members.filter((m) => m.character.status !== 'okay').map((m) => `${m.character.name} ${m.character.status}`).join(', ')}`)
-  if (step % 25 === 0 && standing.length === members.length && !session.busy) {
+  if (process.env.PLAY_DEBUG && step % 25 === 0 && members.some((m) => m.character.status === 'dead' || m.character.status === 'stoned')) console.log(`step ${step}: no checkpoint: ${members.filter((m) => m.character.status !== 'okay').map((m) => `${m.character.name} ${m.character.status}`).join(', ')}`)
+  // Saved whenever nobody is dead: the unconscious come round on the reload anyway.
+  if ((step % 25 === 0 || saveSoon) && members.every((m) => m.character.status !== 'dead' && m.character.status !== 'stoned') && !session.busy) {
+    saveSoon = false
     checkpoint = session.snapshot()
     if (quest) questCheckpoint = { phase: quest.phase, target: quest.target, laps: quest.laps, rewards: quest.rewards, anteroom: quest.anteroom, wrong: quest.wrong, log: [...quest.log] }
   }
@@ -570,7 +574,7 @@ for (let step = 0; step < STEPS; step++) {
   }
   const before = `${session.party.row},${session.party.col},${session.scriptId}`
   if (quest) {
-    if (process.env.PLAY_DEBUG && quest.phase !== 'slums') console.log(`q${step} ${quest.phase} s${session.scriptId}/m${session.map?.id} @${session.party.row},${session.party.col} ${session.party.facing} anteroom ${quest.anteroom} event ${session.map ? cellAt(session.map, session.party.row, session.party.col)?.event : '-'}`)
+    if (process.env.PLAY_DEBUG && quest.phase !== 'slums') console.log(`q${step}${WATCH.map((a) => ` [${a.toString(16)}]=${mem().read(a)}`).join('')} ${quest.phase} s${session.scriptId}/m${session.map?.id} @${session.party.row},${session.party.col} ${session.party.facing} anteroom ${quest.anteroom} event ${session.map ? cellAt(session.map, session.party.row, session.party.col)?.event : '-'}`)
     const cleared = mem().read(0x4abb) >= 254
     if (quest.phase === 'slums' && cleared) { quest.phase = 'city'; console.log(`step ${step}: THE SLUMS ARE CLEARED (kills counted ${mem().read(0x4a80)})`) }
     if (quest.phase === 'slums' && session.scriptId !== 20 && !session.busy) {
@@ -641,6 +645,9 @@ for (let step = 0; step < STEPS; step++) {
           const routed = edges.size > 0 ? routeTo(session.map, session.party, edges, step) : undefined
           if (routed) { await go(routed, step); continue }
           if (edges.size > 0) { quest.visited.add(`${where}:edge:${[...edges][0]}`); continue }
+          // A door that was shut may be open by now: the squares that only bounced are tried again next lap.
+          for (const k of quest.bounced) quest.deadly.delete(k)
+          quest.bounced.clear()
           quest.visited.clear(); quest.laps++; continue
         }
         const routed = routeTo(session.map, session.party, unvisited, step)
