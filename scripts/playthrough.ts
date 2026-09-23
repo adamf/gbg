@@ -25,6 +25,8 @@ if (!folder) {
   process.exit(2)
 }
 const STEPS = Number(stepsArg ?? 2000)
+/** How many times a wipe may be reloaded before the run stops; PLAY_RELOADS raises it for a long tour. */
+const MAX_RELOADS = Number(process.env.PLAY_RELOADS ?? 200)
 let seed = Number(seedArg ?? 1)
 const random = (max: number): number => {
   // The high bits of the generator: its low bits cycle, and dice cut from them miss forever.
@@ -42,6 +44,7 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+let stairsAt = -100
 let stepNow = 0
 let restTries = 0
 let noCampUntil = 0
@@ -94,7 +97,9 @@ const TARGETS: { name: string; script: number; area: number; flag?: number }[] =
   { name: 'Valjevo Castle, South West', script: 6, area: 5 },
   { name: 'Valjevo Castle, Inner Tower', script: 7, area: 5 },
 ]
-const quest = process.env.PLAY_QUEST ? { phase: (process.env.PLAY_PARTY === 'roll' ? 'outfit' : 'slums') as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: 0, laps: 0, rewards: 0 } : undefined
+// PLAY_TARGET names an area to start the tour at, the earlier story skipped: for testing one area.
+const startTarget = process.env.PLAY_TARGET ? TARGETS.findIndex((t) => t.name.toLowerCase().includes(process.env.PLAY_TARGET!.toLowerCase())) : -1
+const quest = process.env.PLAY_QUEST ? { phase: (startTarget >= 0 ? 'area' : process.env.PLAY_PARTY === 'roll' ? 'outfit' : 'slums') as Phase, log: [] as string[], started: 0, visited: new Set<string>(), deadly: new Set<string>(), wipes: new Map<string, number>(), detour: undefined as Phase | undefined, retries: 0, wrong: 0, anteroom: false, target: Math.max(0, startTarget), laps: 0, rewards: 0 } : undefined
 const mem = () => (session as unknown as { memory: { read(a: number): number } }).memory
 let seller = 0
 let sold = 0
@@ -175,6 +180,8 @@ const ui: SessionUi = {
       // Take what can be sold, up to a pack each; the shops turn it into training gold.
       const carried = session.roster.members.reduce((n, m) => n + m.items.length, 0)
       const take = labels.findIndex((l) => l.startsWith('TAKE '))
+      // An armoury's worth on the floor is left where it lies: nobody carries a smithy home.
+      if (labels.length > 40 || (menuSeen.get(key) ?? 0) > 100) return find('LEAVE THE REST')
       return take >= 0 && carried < session.roster.members.length * 8 ? take : find('LEAVE THE REST')
     }
     // Nobody forces their way past temple guards or stays for the city watch on a commission.
@@ -187,6 +194,8 @@ const ui: SessionUi = {
       // No to the boat while the keep is unfinished, and never a wager or another round of dice.
       if (quest.phase === 'sokal' && /BOAT BACK/.test(last)) return 1
       if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?|CLIMB UP|BREAK IN/.test(last)) return 1
+      // Stairs: once, not up and down for ever.
+      if (/THESE STAIRS/.test(last)) { if (stepNow - stairsAt < 30) return 1; stairsAt = stepNow; return 0 }
       return 0
     }
     if (prompt?.startsWith('THE TEMPLE.')) {
@@ -475,8 +484,8 @@ for (let step = 0; step < STEPS; step++) {
   if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step}: at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}${quest ? `; ${quest.phase} laps ${quest.laps} visited ${quest.visited.size} deadly ${quest.deadly.size}` : ''}`)
   if (standing.length === 0) {
     deaths++
-    if (quest && reloads >= 200) { console.log(`step ${step}: OUT OF RELOADS`); break }
-    if (checkpoint && reloads < 200) {
+    if (quest && reloads >= MAX_RELOADS) { console.log(`step ${step}: OUT OF RELOADS`); break }
+    if (checkpoint && reloads < MAX_RELOADS) {
       // What a player does after a wipe: reload the last save, and steer clear of
       // the square that did it — a building with thirty guards is not a commission.
       // A second wipe on the same square marks it: one may be a wandering pack, two is the building's own fight.
