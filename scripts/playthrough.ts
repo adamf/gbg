@@ -46,6 +46,8 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+let drained = false
+let levelsAtSave: number[] = []
 /** The ending's line has printed: the game is won and the run stops. */
 let won = false
 let searchUntil = -1
@@ -129,6 +131,8 @@ const ui: SessionUi = {
   print: (text) => {
     if (text.includes('EACH SURVIVOR GAINS')) { wins++; saveSoon = true }
     if (text.includes('THE PARTY HAS FALLEN')) losses++
+    // A level drained is a level gone for good: every Gold Box player reloaded, and so does the bot.
+    if (quest && /LOSES A LEVEL|DRAINED OF LIFE/.test(text)) drained = true
     if (text.includes('THE PARTY RESTS')) rests++
     if (quest && text.includes('TYRANTHRAXUS HAS FINALLY BEEN DEFEATED')) { won = true }
     // A locked door is the hour, not the square: rest until it opens, and hold no grudge against the square.
@@ -546,6 +550,18 @@ for (let step = 0; step < STEPS; step++) {
   }
   const members = session.roster.members
   const standing = members.filter((m) => m.character.status === 'okay')
+  // The fight's lines never reach the print hook: a drain shows as a level below the save's.
+  if (quest && levelsAtSave.length === members.length && members.some((m, i) => Math.max(...m.character.levels) < levelsAtSave[i]!)) drained = true
+  if (drained && checkpoint && reloads < MAX_RELOADS && !session.busy) {
+    drained = false
+    reloads++
+    if (process.env.PLAY_DEBUG) console.log(`step ${step}: DRAINED; reloading`)
+    await session.load(checkpoint)
+    if (quest && questCheckpoint) Object.assign(quest, { ...questCheckpoint, log: [...questCheckpoint.log], visited: new Set<string>() })
+    for (const m of session.roster.members) { m.character.hpCurrent = m.character.hpMax }
+    continue
+  }
+  drained = false
   // Anything bought or picked up that fills an empty hand or back is readied, and a
   // caster with nothing chosen for the night picks the usual: what MEMORISE would.
   for (const m of members) {
@@ -588,6 +604,7 @@ for (let step = 0; step < STEPS; step++) {
   if ((step % 25 === 0 || saveSoon) && members.every((m) => m.character.status !== 'dead' && m.character.status !== 'stoned') && !session.busy) {
     saveSoon = false
     checkpoint = session.snapshot()
+    levelsAtSave = session.roster.members.map((m) => Math.max(...m.character.levels))
     if (quest) questCheckpoint = { phase: quest.phase, target: quest.target, laps: quest.laps, rewards: quest.rewards, anteroom: quest.anteroom, wrong: quest.wrong, log: [...quest.log] }
   }
   // A dead member would need a temple and the coins for it; the bot just raises them and counts it.
