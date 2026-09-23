@@ -100,7 +100,7 @@ const TARGETS: { name: string; script: number; area: number; flag?: number; ride
   { name: 'Nomad Camp', script: 17, area: 7, ride: { x: 25, y: 11 } },
   { name: "Sorcerer's Island, Level 1", script: 22, area: 7, ride: { x: 19, y: 16 } },
   { name: "Sorcerer's Island, Levels 2 and 3", script: 23, area: 7 },
-  { name: 'Wilderness 25', script: 25, area: 6, ride: { x: 10, y: 9 } },
+  { name: 'Wilderness 25', script: 25, area: 6, ride: { x: 6, y: 24 } },
   { name: 'Wilderness 26', script: 26, area: 7, ride: { x: 20, y: 29 } },
   { name: 'Wilderness 27', script: 27, area: 8, ride: { x: 35, y: 29 } },
   { name: 'Valjevo Castle, North West', script: 3, area: 5 },
@@ -160,6 +160,8 @@ const ui: SessionUi = {
     const labels = items.map((i) => i.toUpperCase())
     const find = (word: string) => labels.findIndex((l) => l.includes(word))
     if (find('PRESS') >= 0) return find('PRESS')
+    // The silver dragon is not for fighting, and its menus come round until the party leaves.
+    if (session.scriptId === 19) { if (find('APOLOGIZE') >= 0) return find('APOLOGIZE'); if (find('LEAVE') >= 0) return find('LEAVE') }
     // Riding: the places on the way are passed by; the one ridden to is entered.
     if (quest && session.overhead && TARGETS[quest.target]?.ride) {
       const ride = TARGETS[quest.target]!.ride!
