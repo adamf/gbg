@@ -152,6 +152,25 @@ describe('branching', () => {
     ]), host)
     expect(printed).toEqual(['SET'])
   })
+
+  it('arithmetic leaves the flags alone, so the IFs after it read the last COMPARE', async () => {
+    // Valhingen Graveyard's start: COMPARE a, b; IF < SUBTRACT; IF >= SAVE 0; IF = SAVE 1
+    // — every IF branches on the one COMPARE, whatever the subtraction produced.
+    const IF_GE = 0x1b
+    const { host, printed } = recordingHost()
+    await runProgram(assemble([
+      ins(COMPARE, { imm: 2 }, { imm: 2 }),
+      ins(SUBTRACT, { imm: 5 }, { imm: 3 }, { mem: 0x4a00 }), // 3 - 5: negative, flags untouched
+      ins(IF_GE),
+      ins(PRINT, { str: 'GE' }),
+      ins(IF_EQ),
+      ins(PRINT, { str: 'EQ' }),
+      ins(IF_LT),
+      ins(PRINT, { str: 'NOT PRINTED' }),
+      ins(EXIT),
+    ]), host)
+    expect(printed).toEqual(['GE', 'EQ'])
+  })
 })
 
 describe('the outside world', () => {

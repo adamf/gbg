@@ -27,6 +27,8 @@ if (!folder) {
 const STEPS = Number(stepsArg ?? 2000)
 /** How many times a wipe may be reloaded before the run stops; PLAY_RELOADS raises it for a long tour. */
 const MAX_RELOADS = Number(process.env.PLAY_RELOADS ?? 200)
+/** PLAY_WATCH=4a15,4a41 prints those memory words with the walk log. */
+const WATCH = (process.env.PLAY_WATCH ?? '').split(',').filter(Boolean).map((h) => parseInt(h, 16))
 let seed = Number(seedArg ?? 1)
 const random = (max: number): number => {
   // The high bits of the generator: its low bits cycle, and dice cut from them miss forever.
@@ -175,6 +177,8 @@ const ui: SessionUi = {
       if (quest && find('PARLAY') >= 0 && /UNDEAD/.test(texts.slice(-2).join(' '))) return find('PARLAY')
       return quest ? find('COMBAT') : random(9) < 7 ? find('COMBAT') : find('FLEE')
     }
+    // The vampire's coffin: sanctified, not overturned, and never merely examined.
+    if (quest && find('SANCTIFY') >= 0) return find('SANCTIFY')
     if (find('SHARE') >= 0) return find('SHARE')
     if (find('LEAVE THE REST') >= 0) {
       // Take what can be sold, up to a pack each; the shops turn it into training gold.
@@ -187,7 +191,9 @@ const ui: SessionUi = {
     // Nobody forces their way past temple guards or stays for the city watch on a commission.
     if (quest && find('FORCE') >= 0 && find('LEAVE') >= 0) return find('LEAVE')
     // STAY is always the fight: the city watch's GO or RUN is the other answer.
-    if (quest && find('STAY') >= 0 && labels.length === 2) return 1 - find('STAY')
+    if (quest && find('STAY') >= 0 && labels.length === 2 && /WATCH|ROUSTED|MOVE ALONG/.test(texts.slice(-2).join(' '))) return 1 - find('STAY')
+    // Elsewhere STAY is the brave answer: the wraith over the paladin's crypt is fought, not left.
+    if (quest && find('STAY') >= 0 && labels.length === 2) return find('STAY')
     // A small menu with ATTACK on it: talk, let the old orc touch you, anything before the blade.
     if (quest && find('ATTACK') >= 0 && labels.length <= 3) {
       const gentle = labels.findIndex((l) => /TALK|LET |LISTEN|ACCEPT|GIVE|WAIT/.test(l))
@@ -197,7 +203,11 @@ const ui: SessionUi = {
       const last = texts.slice(-3).join(' ')
       // No to the boat while the keep is unfinished, and never a wager or another round of dice.
       if (quest.phase === 'sokal' && /BOAT BACK/.test(last)) return 1
-      if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?|CLIMB UP|BREAK IN/.test(last)) return 1
+      // Breaking in is for outside town: in Phlan it brings the watch, in the graveyard it opens the crypts.
+      if (/BREAK IN/.test(last)) return session.scriptId === 0 ? 1 : 0
+      // 'Do you leave?' from a tower's spirits or a bandit's hall: the party stays and fights.
+      if (/DO YOU LEAVE\?/.test(last)) return 1
+      if (/WAGER|AGAIN|ANOTHER|BET|DICE|GAMBL|REST HERE|STAY\?|CLIMB UP/.test(last)) return 1
       // A pile offered on every step over it is looked at once.
       if (/TAKE ANYTHING/.test(last) && (menuSeen.get(key) ?? 0) > 2) return 1
       // Stairs: once, not up and down for ever.
@@ -401,10 +411,23 @@ async function go(command: 'forward' | 'turnLeft' | 'turnRight', step: number): 
   const target = `${session.scriptId}/${session.map?.id}:${session.party.row + ahead.dRow},${session.party.col + ahead.dCol}`
   if (command === 'forward') lastStep = { from: before, to: target }
   try { await withTimeout(session.move(command), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
-  const after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+  let after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+  // A step the map allows but the script refused: a secret door, found only while
+  // searching. Once more with the search on, as a player would.
+  const [r0, c0] = before.split(':')[1]!.split(',').map(Number) as [number, number]
+  if (quest && command === 'forward' && after === before && !lockedDoor && !session.searching && session.map && canWalk(session.map, r0, c0, session.party.facing) && !session.busy) {
+    session.toggleSearch()
+    if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: refused at ${before} facing ${session.party.facing}; once more searching`)
+    try { await withTimeout(session.move('forward'), 20_000, `quest step ${step}`) } catch (e) { errors.push(String(e)) }
+    if (session.searching) session.toggleSearch()
+    after = `${session.scriptId}/${session.map?.id}:${session.party.row},${session.party.col}`
+  }
   // Only a step the map allows counts as a bounce; walking into a wall is the bot's own doing.
   const open = command === 'forward' && session.map !== undefined && canWalk(session.map, before.split(':')[1]!.split(',').map(Number)[0]!, before.split(':')[1]!.split(',').map(Number)[1]!, session.party.facing)
   // A turn between two refused steps does not clear the count: a door that turns the party round refuses it three times all the same.
+  // A step that was refused counts the square ahead as seen: a room that throws the
+  // party out, or a door that will not open, is not tried for ever.
+  if (quest && command === 'forward' && after === before) { quest.visited.add(target); quest.visited.add(`${session.scriptId}:${target.split(':')[1]}`) }
   bounces = open && after === before && !lockedDoor ? bounces + 1 : after !== before ? 0 : bounces
   lockedDoor = false
   if (bounces >= 3 && quest) { quest.deadly.add(target); bounces = 0; if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: ${target} bounces the party; routing round it`) }
@@ -494,7 +517,7 @@ for (let step = 0; step < STEPS; step++) {
       if (at >= 0) ready(m.character, m.items, at, itemTypes)
     }
   }
-  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step} (${Date.now() - started}ms): at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}${quest ? `; ${quest.phase} laps ${quest.laps} visited ${quest.visited.size} deadly ${quest.deadly.size}` : ''}`)
+  if (process.env.PLAY_DEBUG && step % 100 === 0) console.log(`step ${step} (${Date.now() - started}ms): at ${session.scriptId}:${session.party.row},${session.party.col} ${session.party.facing}; busy ${session.busy}; standing ${standing.length}; stuck ${stuck}${quest ? `; ${quest.phase} laps ${quest.laps} visited ${quest.visited.size} deadly ${quest.deadly.size}` : ''}${WATCH.map((a) => ` [${a.toString(16)}]=${mem().read(a)}`).join('')}`)
   if (standing.length === 0) {
     deaths++
     if (quest && reloads >= MAX_RELOADS) { console.log(`step ${step}: OUT OF RELOADS`); break }
@@ -572,7 +595,7 @@ for (let step = 0; step < STEPS; step++) {
       const target = TARGETS[quest.target]
       if (!target) { quest.phase = 'done'; console.log(`step ${step}: EVERY TARGET TRIED`); break }
       const cleared = target.flag !== undefined && mem().read(target.flag) >= 254
-      if (quest.phase === 'area' && (cleared || quest.laps >= (target.script === 15 ? 8 : target.flag === undefined ? 2 : 3))) {
+      if (quest.phase === 'area' && (cleared || quest.laps >= (target.script === 15 || target.script === 10 ? 8 : target.flag === undefined ? 2 : 3))) {
         console.log(`step ${step}: ${target.name} ${cleared ? 'IS CLEARED' : `${target.flag === undefined ? 'TOURED' : 'GIVEN UP'} AFTER ${quest.laps} LAPS`}${target.flag !== undefined ? ` (flag ${mem().read(target.flag)})` : ''}`)
         if (target.flag === undefined) { quest.target++; quest.visited.clear(); quest.laps = 0; console.log(`step ${step}: NEXT ${TARGETS[quest.target]?.name ?? 'nothing'}`); continue }
         quest.phase = 'collect'; quest.anteroom = false
@@ -602,10 +625,6 @@ for (let step = 0; step < STEPS; step++) {
         // Keyed by map as well as script: Kuto's Well is two maps under one script.
         const where = `${session.scriptId}/${session.map.id}`
         quest.visited.add(`${where}:${session.party.row},${session.party.col}`)
-        // The square ahead counts as seen once the party tries to enter it: a room that
-        // throws the party out would otherwise be tried forever.
-        const ahead = stepOf(session.party.facing)
-        quest.visited.add(`${where}:${session.party.row + ahead.dRow},${session.party.col + ahead.dCol}`)
         const unvisited = new Set(session.map.cells.filter((c) => c.event > 0 && !quest.visited.has(`${where}:${c.row},${c.col}`) && !quest.deadly.has(`${where}:${c.row},${c.col}`)).map((c) => `${c.row},${c.col}`))
         if (unvisited.size === 0) {
           // Every event square seen: then off each open edge once — the Temple of Bane's
@@ -626,6 +645,7 @@ for (let step = 0; step < STEPS; step++) {
         }
         const routed = routeTo(session.map, session.party, unvisited, step)
         if (routed) { await go(routed, step); continue }
+        if (process.env.PLAY_DEBUG) console.log(`quest step ${step}: no route from ${session.party.row},${session.party.col} to ${[...unvisited].slice(0, 8).join(' ')} (${unvisited.size}); deadly ${[...deadlyHere()].join(' ')}`)
         quest.visited.add(`${where}:${[...unvisited][0]}`)
         continue
       }

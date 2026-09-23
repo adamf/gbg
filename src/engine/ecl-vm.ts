@@ -539,6 +539,8 @@ export class EclVm {
         else if (opcode === 0x05) value = b - a
         else if (opcode === 0x06) value = b === 0 ? 0 : Math.floor(a / b)
         else value = a * b
+        // The flags are left alone (coab's CMD_AddSubDivMulti): Valhingen Graveyard's
+        // COMPARE, SUBTRACT, IF >=, IF = all branch on the one COMPARE.
         this.memory.write(operands[2]!.word, value & 0xffff)
         return
       }

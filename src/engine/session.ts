@@ -764,6 +764,9 @@ export class GameSession {
       const fighter = battle.current
       if (!fighter) { battle.endTurn(); continue }
       if (fighter.side === 'monster' || quick) {
+        // The computer's party breaks off a fight nobody can finish: two sides that
+        // cannot reach each other, or a hundred rounds of it.
+        if (quick && fighter.side === 'party' && (battle.stalled || battle.combat.round > 100)) { outcome = 'fled'; break }
         const lines = fighter.side === 'monster' ? battle.monsterTurn(fighter) : battle.autoTurn(fighter)
         await this.ui.battleUpdate(battle, lines)
         this.ui.party(this.roster.members, this.roster.selected)

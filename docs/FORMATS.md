@@ -289,7 +289,9 @@ reader needs to know:
   `a >= b`; **IF** skips the *next instruction* when its flag is false. AND and OR leave
   the flags as if comparing zero with the result, so an `IF <` after them means "not
   zero".
-- **SUBTRACT a, b, dst** stores `b - a`; the other arithmetic is in operand order.
+- **SUBTRACT a, b, dst** stores `b - a`; the other arithmetic is in operand order. None of
+  the four touches the flags (coab's `CMD_AddSubDivMulti`): Valhingen Graveyard's start does
+  `COMPARE`, `SUBTRACT`, `IF >=`, `IF =`, and every `IF` there reads the one `COMPARE`.
 - **RANDOM n, dst** stores 0..n inclusive.
 - **ON GOTO sel, count, t0..** jumps to `t[sel]` and falls through when `sel >= count`.
   That settles the question above: event *N* is entry *N*, and event 0 is a real

@@ -60,7 +60,10 @@ for (const member of session.roster.members) {
   const c = member.character
   const tracks = CLASS_TRACKS.filter((t, i) => (c.levels[i] ?? 0) > 0) as Track[]
   // Every class the character has, to the level asked for, within the race's limit as the halls would hold it.
-  for (const track of tracks) while ((c.levels[CLASS_TRACKS.indexOf(track)] ?? 0) < Math.min(level, levelLimit(c.race, track))) train(c, track, random)
+  // ...and within the game's own cap, where the table of thresholds ends.
+  for (const track of tracks) {
+    while ((c.levels[CLASS_TRACKS.indexOf(track)] ?? 0) < Math.min(level, levelLimit(c.race, track)) && Number.isFinite(nextLevelAt(track, c.levels[CLASS_TRACKS.indexOf(track)] ?? 0))) train(c, track, random)
+  }
   c.experience = Math.max(...tracks.map((t) => nextLevelAt(t, (c.levels[CLASS_TRACKS.indexOf(t)] ?? 1) - 1))) * tracks.length
   c.hpCurrent = c.hpMax
   c.money = [0, 0, 0, 3000, 0, 0, 0]
