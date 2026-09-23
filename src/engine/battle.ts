@@ -566,6 +566,12 @@ export class Battle {
       return foes.sort((a, b) => (Math.abs(a.x - f.x) + Math.abs(a.y - f.y)) - (Math.abs(b.x - f.x) + Math.abs(b.y - f.y)))[0]
     }
 
+    // A cleric facing undead presents the holy symbol before anything else: the
+    // computer plays its clerics the way a player would in a graveyard.
+    if ((me.levels[0] ?? 0) > 0 && this.undead().length > 0 && !f.acted) {
+      this.actedThisRound = true
+      return this.turnUndead(f)
+    }
     const spells = this.combat.has(me, 'silence') ? [] : ready(me).filter((s) => s.target === 'foe' || s.target === 'foes')
     if (spells.length > 0) {
       const spell = spells[this.random(spells.length - 1)]!
