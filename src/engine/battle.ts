@@ -13,7 +13,7 @@ import type { Character } from '../formats/character.js'
 import type { Direction, GeoMap } from '../formats/geo.js'
 import { buildArena, buildWildArena, type Arena } from './arena.js'
 import { Combat, hits, monsterKind, rollDamage, saves, takeDamage, targetable, type Combatant, type Random } from './combat.js'
-import { cast, forget, ready } from './casting.js'
+import { cast, casterLevel, forget, ready } from './casting.js'
 import { turnOne, UNDEAD } from './undead.js'
 import { SPRITE } from './sprites.js'
 import { spendMissile } from './burden.js'
@@ -583,7 +583,21 @@ export class Battle {
     }
     const spells = this.combat.has(me, 'silence') ? [] : ready(me).filter((s) => (s.target === 'foe' || s.target === 'foes') && worthCasting(s))
     if (spells.length > 0) {
-      const spell = spells[this.random(spells.length - 1)]!
+      // The spell worth most against what stands here: a fireball over a crowd before a
+      // magic missile at one of them, a hold before a curse.
+      const level = Math.max(casterLevel(me, 'cleric'), casterLevel(me, 'magic-user'), 1)
+      const worth = (sp: Spell): number => {
+        const e = sp.effect
+        const n = sp.target === 'foes' ? Math.min(e.count ?? 99, foesUp.length) : 1
+        const avg = (dice: number, sides: number) => (dice * (sides + 1)) / 2
+        if (e.kind === 'damage' || e.kind === 'harm') return (avg(e.dice ?? 0, e.sides ?? 1) + (e.bonus ?? 0) + avg((e.perLevel ?? 0) * level, e.sides ?? 1)) * n * (sp.target === 'foes' ? 0.75 : 1)
+        if (e.kind === 'hold') return 6 * n
+        if (e.kind === 'sleep') return 5 * Math.min(5, foesUp.length)
+        return 2
+      }
+      const best = Math.max(...spells.map(worth))
+      const top = spells.filter((sp) => worth(sp) >= best - 0.01)
+      const spell = top[this.random(top.length - 1)]!
       const foes = this.fighters.filter((o) => o.side !== f.side && able(o.combatant.member.character))
       const chosen = spell.target === 'foe' ? [target()].filter((t): t is Fighter => t !== undefined) : foes.slice(0, spell.effect.count ?? 99)
       if (chosen.length > 0) {

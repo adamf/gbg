@@ -46,6 +46,8 @@ let losses = 0
 let raises = 0
 let trainTries = 0
 let wantRest = false
+/** The ending's line has printed: the game is won and the run stops. */
+let won = false
 let searchUntil = -1
 /** Set by a won fight: the next quiet moment is saved, as a Gold Box player saves after every fight. */
 let saveSoon = false
@@ -128,6 +130,7 @@ const ui: SessionUi = {
     if (text.includes('EACH SURVIVOR GAINS')) { wins++; saveSoon = true }
     if (text.includes('THE PARTY HAS FALLEN')) losses++
     if (text.includes('THE PARTY RESTS')) rests++
+    if (quest && text.includes('TYRANTHRAXUS HAS FINALLY BEEN DEFEATED')) { won = true }
     // A locked door is the hour, not the square: rest until it opens, and hold no grudge against the square.
     // Only the town's doors are locked by the hour; a locked door anywhere else is routed round like a wall.
     if (text.includes('THE DOOR IS LOCKED') && session.scriptId === 0) { lockedDoor = true; wantTimePass = true }
@@ -520,6 +523,7 @@ let questCheckpoint: { phase: Phase; target: number; laps: number; rewards: numb
 
 for (let step = 0; step < STEPS; step++) {
   stepNow = step
+  if (won) { console.log(`step ${step}: TYRANTHRAXUS IS DEFEATED — THE GAME IS WON`); break }
   if (session.scriptId !== lastScript) {
     lastScript = session.scriptId
     areas.set(lastScript, (areas.get(lastScript) ?? 0) + 1)

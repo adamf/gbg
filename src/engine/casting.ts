@@ -54,8 +54,8 @@ export function memorise(character: Character, ids: readonly number[]): number[]
 export function autoPrepare(character: Character): void {
   const chosen: number[] = []
   const prefer: Record<CasterClass, number[]> = {
-    cleric: [3, 1, 6, 23, 28],
-    'magic-user': [21, 15, 9, 20, 19, 34, 45, 51, 49],
+    cleric: [23, 3, 1, 6, 28],
+    'magic-user': [47, 51, 49, 34, 15, 21, 9, 20, 19, 45],
   }
   for (const casterClass of ['cleric', 'magic-user'] as const) {
     slots(character, casterClass).forEach((count, index) => {
