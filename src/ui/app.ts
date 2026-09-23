@@ -554,7 +554,13 @@ async function newGame(): Promise<void> {
     return
   }
   const session = await openPlayScreen(lib)
-  const how = await pageUi.menu('A NEW GAME.', ['USE THE PRE-MADE PARTY', 'CREATE A PARTY'], 'horizontal')
+  // Any other DOS save in the folder — the original's, or one this program exported.
+  const others = lib.savedGameLetters().filter((l) => l !== 'A')
+  const how = await pageUi.menu('A NEW GAME.', ['USE THE PRE-MADE PARTY', 'CREATE A PARTY', ...others.map((l) => `LOAD GAME ${l}`)], 'horizontal')
+  if (how >= 2) {
+    const other = await lib.savedGame(others[how - 2]!)
+    if (other) { await session.resume(other); return }
+  }
   const members = how === 1 ? await session.createParty() : undefined
   await session.resume(saved, members && members.length > 0 ? members : undefined)
 }

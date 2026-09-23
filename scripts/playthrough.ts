@@ -311,8 +311,9 @@ function shopper(): { index: number; wants: string[] } | undefined {
   }
   return undefined
 }
-// PLAY_PARTY=J starts from the other shipped party; PLAY_PARTY=roll rolls six of its own.
-const saved = await library.savedGame(process.env.PLAY_PARTY === 'J' ? 'J' : 'A')
+// PLAY_PARTY=<letter> starts from that saved game (J is the other shipped party, C what
+// scripts/make-save.ts writes); PLAY_PARTY=roll rolls six of its own.
+const saved = await library.savedGame(/^[A-Z]$/i.test(process.env.PLAY_PARTY ?? '') ? process.env.PLAY_PARTY! : 'A')
 if (!saved) throw new Error('no SAVGAMA.DAT')
 const session = new GameSession(library, ui)
 session.random = random

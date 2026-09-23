@@ -469,6 +469,11 @@ export class GameLibrary {
     return members
   }
 
+  /** The letters of every SAVGAM?.DAT in the folder: the shipped A and J, and any written since. */
+  savedGameLetters(): string[] {
+    return this.source.list().map((n) => /^SAVGAM([A-Z])\.DAT$/i.exec(n)?.[1]?.toUpperCase()).filter((l): l is string => l !== undefined).sort()
+  }
+
   /** The saved game a new game starts from: SAVGAMA.DAT, or whichever letter is asked for. */
   async savedGame(letter = 'A'): Promise<SavedGame | undefined> {
     const data = await this.source.read(`SAVGAM${letter.toUpperCase()}.DAT`)

@@ -98,7 +98,9 @@ Sokal Keep, answer its undead with the journal's words, clear it, sail home and 
 again, then the clerk's other areas one by one, and then tours every other scripted
 level in the game two laps each (`PLAY_TARGET=<name>` starts there). It has done all of that on several seeds
 with the pre-made party and with one it rolled (`PLAY_PARTY=roll`, which buys its gear
-first); that is how far the story is proven to run. The clerk's office is reached through her anteroom from the south. Script commands that need
+first); with the sixth-level party `scripts/make-save.ts` writes (`PLAY_PARTY=C`, and the
+page's NEW GAME offers LOAD GAME C) it clears Sokal Keep too. That is how far the story is
+proven to run. The clerk's office is reached through her anteroom from the south. Script commands that need
 those run as no-ops and say so in the page's notes line.
 
 ## How it is put together
@@ -156,6 +158,7 @@ npm test                             # the suite; no game data required
 npm run inspect -- /path/to/game     # what a folder holds
 npm run inspect -- /path/to/game ECL1.DAX 1   # disassemble a script
 npm run dump -- /path/to/game ./out  # extract everything
+npm run make-save -- /path/to/game C 6   # a sixth-level party as SAVGAMC.DAT, for testing the late game
 ```
 
 `.github/workflows/ci.yml` typechecks, tests and builds on every branch but main.
