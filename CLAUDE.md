@@ -91,6 +91,12 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **Scrolls** — a Magic User or Clerical Scroll carries up to three spells in its
   affect bytes; a caster of its class reads one (USE, at camp or in a fight) at
   sixth level or their own, and a magic-user can SCRIBE one into the book at camp.
+- **The page** — a stage for the 3D view, the wilderness or a fight; a sidebar with
+  a compass, the day and hour, the minimap and a party roster whose rows open a
+  character sheet; a bottom bar with the message box, an on-screen pad (eight ways
+  outdoors and in a fight) and the camp, view, search, look, log and keys buttons.
+  Everything is playable by mouse: menus are buttons, a fight is clicks on squares and
+  foes, spells are aimed on the field, the wilderness is ridden by clicking the map.
 - **Headless play** — `src/headless/driver.ts` runs a session with no page: every
   prompt queues for the caller and the state is a plain object. `npm run headless --
   <folder>` is that as a JSON-lines conversation on stdin/stdout, and `npm run mcp --

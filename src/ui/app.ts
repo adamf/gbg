@@ -838,6 +838,18 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#actions butt
 }
 for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
 for (const overlay of [sheetOverlay, logOverlay, keysOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+// Outdoors a click on the map rides a square toward the point clicked.
+overheadCanvas.addEventListener('click', (event) => {
+  if (!session || session.busy || openMenu || openOverlay || !session.overhead) return
+  const rect = overheadCanvas.getBoundingClientRect()
+  const dx = (event.clientX - rect.left) / rect.width - 0.5
+  const dy = (event.clientY - rect.top) / rect.height - 0.5
+  // The party sits mid-canvas; the angle to the click picks one of the eight ways.
+  const angle = Math.atan2(dx, -dy)
+  const direction = ((Math.round((angle / (Math.PI / 4))) % 8) + 8) % 8
+  if (Math.abs(dx) < 0.03 && Math.abs(dy) < 0.03) return
+  void session.moveOverland(direction)
+})
 // The stage changes size as the text box grows; the view keeps up.
 new ResizeObserver(() => viewer?.resize()).observe(el('stage'))
 
