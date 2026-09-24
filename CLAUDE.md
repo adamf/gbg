@@ -19,8 +19,9 @@ one server-side, or check a `.DAX` into git is the wrong change.
   step-and-turn movement.
 - **The scripts, running** — an ECL interpreter with the original's semantics, a game
   session that runs the right entry points on level load and after every step, and the
-  page as its host: text box, menus, pictures, encounter sprites. A new game starts from
-  the shipped saved game, in the Slums.
+  page as its host: text box, menus, pictures, encounter sprites. A new game begins
+  as the original did: on the dock, with the council's guide walking the party round
+  Phlan; the shipped saved game A lends only its pre-made party.
 - **A CLI** — `inspect` reports what a folder holds and disassembles scripts; `dump` extracts
   every picture to PNG and every level to JSON.
 

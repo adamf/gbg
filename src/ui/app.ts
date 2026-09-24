@@ -981,8 +981,9 @@ async function newGame(): Promise<void> {
     const other = await lib.savedGame(others[how - 2]!)
     if (other) { await session.resume(other); return }
   }
-  const members = how === 1 ? await session.createParty() : undefined
-  await session.resume(saved, members && members.length > 0 ? members : undefined)
+  // The original began on the dock with the council's guide; the shipped save A only lends its party.
+  const members = how === 1 ? await session.createParty() : []
+  await session.begin(members.length > 0 ? members : await lib.party(saved))
 }
 
 async function continueGame(): Promise<void> {

@@ -6,7 +6,7 @@
  *   npm run headless -- /path/to/game
  *
  * Commands (JSON objects):
- *   {"cmd":"new","save":"A"}         start from a saved game letter (A and J ship with the game)
+ *   {"cmd":"new"}                    a new game on the dock with the pre-made party; "save":"A" loads a saved game letter instead
  *   {"cmd":"state"}                  the state, with everything printed since the last state
  *   {"cmd":"move","dir":"forward"}   forward | back | left | right | turnLeft | turnRight | turnAround
  *   {"cmd":"ride","dir":0}           outdoors: 0 north, clockwise to 7 north-west
@@ -46,7 +46,7 @@ async function handle(line: string): Promise<void> {
   try { command = JSON.parse(line) as Record<string, unknown> } catch { out({ error: 'not JSON' }); return }
   try {
     switch (command.cmd) {
-      case 'new': await game.newGame(String(command.save ?? 'A')); break
+      case 'new': await game.newGame(String(command.save ?? 'new')); break
       case 'state': break
       case 'move': await game.move(String(command.dir) as MoveCommand); break
       case 'ride': await game.ride(Number(command.dir)); break

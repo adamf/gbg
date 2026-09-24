@@ -97,11 +97,16 @@ export class HeadlessGame {
     }
   }
 
-  /** Starts from a shipped or exported saved game: A and J ship with the game. */
-  async newGame(letter = 'A'): Promise<void> {
-    const saved = await this.library.savedGame(letter)
+  /**
+   * Starts a game. 'new' begins as the original did — on the dock, with the guide's
+   * tour — using the pre-made party the shipped save A names; a letter loads that
+   * saved game (A and J ship with the game) where it stands.
+   */
+  async newGame(letter = 'new'): Promise<void> {
+    const saved = await this.library.savedGame(letter === 'new' ? 'A' : letter)
     if (!saved) throw new Error(`no saved game ${letter}`)
     this.session = new GameSession(this.library, this.ui())
+    if (letter === 'new') { const members = await this.library.party(saved); await this.run(() => this.session!.begin(members)); return }
     await this.run(() => this.session!.resume(saved))
   }
 

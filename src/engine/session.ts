@@ -114,6 +114,10 @@ export interface SpellChoice {
   chosen: number[]
 }
 
+/** Where Pool of Radiance begins: the civilised area's script, in area 3. */
+const CITY_SCRIPT = 0
+const CITY_AREA = 3
+
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
 /** What the page must provide for a script to be played. */
@@ -285,6 +289,33 @@ export class GameSession {
     // The script checks whether it was the last one loaded to skip its setup; it was.
     await this.withScript(async () => {
       await this.loadScript(blockId)
+      await this.runStart()
+    })
+  }
+
+  /**
+   * A brand-new game, the way the original began one: fresh memory, the city's
+   * script, and the party set down on the dock, where the council's guide meets
+   * them and walks them round the town. `members` is the party — the pre-made six
+   * or a rolled one.
+   */
+  async begin(members: Member[]): Promise<void> {
+    this.memory.clearWords(POOL_ADDRESSES.globalsBase, POOL_ADDRESSES.globalsBase + 0x400)
+    this.memory.clearWords(POOL_ADDRESSES.areaScratchBase, POOL_ADDRESSES.areaScratchBase + 0x500)
+    this.memory.clearWords(POOL_ADDRESSES.extraBase, POOL_ADDRESSES.extraBase + 0x200)
+    this.area = CITY_AREA
+    this.memory.write(POOL_ADDRESSES.gameArea, this.area)
+    this.memory.write(POOL_ADDRESSES.inDungeon, 1)
+    // The shipped save, made just after the tour, reads 10:50: the first day begins at ten.
+    this.memory.write(POOL_ADDRESSES.timeHour, 10)
+    this.roster.members = members
+    await this.armRanges()
+    for (const { character } of this.roster.members) if (canCast(character) && character.prepared.length === 0) autoPrepare(character)
+    this.ui.party(this.roster.members, this.roster.selected)
+    this.party = { row: 1, col: 15, facing: 'west' }
+    this.positionSetByScript = true
+    await this.withScript(async () => {
+      await this.loadScript(CITY_SCRIPT)
       await this.runStart()
     })
   }

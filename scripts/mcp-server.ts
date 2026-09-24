@@ -45,8 +45,8 @@ const reply = (work: () => Promise<unknown> | unknown) => {
 }
 
 server.registerTool('new_game', {
-  description: 'Start from a saved game letter. A and J ship with Pool of Radiance (the two pre-made parties, in the Slums); other letters are saves in the folder.',
-  inputSchema: { save: z.string().default('A') },
+  description: 'Start a game: "new" begins on the dock with the pre-made party and the guide’s tour of Phlan; a letter loads that saved game (A and J ship with the game; others are saves in the folder).',
+  inputSchema: { save: z.string().default('new') },
 }, ({ save }) => reply(() => game.newGame(save)))
 
 server.registerTool('state', {
