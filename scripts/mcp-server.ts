@@ -88,6 +88,32 @@ server.registerTool('enter_level', {
   inputSchema: { level: z.number().int(), area: z.number().int().optional() },
 }, ({ level, area }) => reply(async () => { const ref = await library.levelById(level, area); if (!ref) throw new Error('no such level'); await game.enter(ref) }))
 
+server.registerTool('sheet', {
+  description: 'A party member’s sheet as data: numbers, the pack (index, label, readied), spells memorised and prepared.',
+  inputSchema: { member: z.number().int().min(0) },
+}, async ({ member }) => {
+  try { return { content: [{ type: 'text' as const, text: JSON.stringify(await game.sheet(member)) }] } }
+  catch (e) { return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e instanceof Error ? e.message : String(e) }) }], isError: true } }
+})
+
+server.registerTool('toggle_item', {
+  description: 'Ready an item in a member’s pack, or put it down, by its index in the sheet.',
+  inputSchema: { member: z.number().int().min(0), item: z.number().int().min(0) },
+}, ({ member, item }) => reply(async () => { const problem = await game.toggleItem(member, item); if (problem) throw new Error(problem) }))
+
+server.registerTool('spell_choices', {
+  description: 'What a caster may prepare: for each class and spell level, the slots and the spells known (ids and names), and what is chosen now.',
+  inputSchema: { member: z.number().int().min(0) },
+}, async ({ member }) => {
+  try { return { content: [{ type: 'text' as const, text: JSON.stringify(await game.spellChoices(member)) }] } }
+  catch (e) { return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e instanceof Error ? e.message : String(e) }) }], isError: true } }
+})
+
+server.registerTool('prepare', {
+  description: 'What a caster will have after the next rest: spell ids, one per slot to fill (repeat an id to prepare it twice).',
+  inputSchema: { member: z.number().int().min(0), ids: z.array(z.number().int()) },
+}, ({ member, ids }) => reply(() => game.setPrepared(member, ids)))
+
 server.registerTool('battle_mode', {
   description: 'How fights are played: quick (the computer fights) or auto (the grid battle, each turn by the computer’s tactics).',
   inputSchema: { mode: z.enum(['quick', 'auto']) },

@@ -16,6 +16,10 @@
  *   {"cmd":"snapshot"}               keeps the game in memory; {"cmd":"restore"} brings it back
  *   {"cmd":"enter","level":20,"area":2}   testing: straight to a level
  *   {"cmd":"battle","mode":"quick"}  quick (the computer fights) or auto (the grid, played by the computer)
+ *   {"cmd":"sheet","member":0}        a member's sheet as data (in "sheet" of the reply)
+ *   {"cmd":"toggle_item","member":0,"item":2}   ready or put down one of the pack
+ *   {"cmd":"spell_choices","member":1}    what a caster may prepare (in "choices")
+ *   {"cmd":"prepare","member":1,"ids":[47,47,15]}   what to have after the next rest
  *   {"cmd":"quit"}
  */
 
@@ -60,6 +64,10 @@ async function handle(line: string): Promise<void> {
         break
       }
       case 'battle': game.battleMode = command.mode === 'auto' ? 'auto' : 'quick'; break
+      case 'sheet': out({ sheet: await game.sheet(Number(command.member ?? 0)), ...game.state() }); return
+      case 'toggle_item': { const problem = await game.toggleItem(Number(command.member ?? 0), Number(command.item ?? 0)); if (problem) throw new Error(problem); break }
+      case 'spell_choices': out({ choices: await game.spellChoices(Number(command.member ?? 0)), ...game.state() }); return
+      case 'prepare': await game.setPrepared(Number(command.member ?? 0), (command.ids as number[]) ?? []); break
       case 'quit': process.exit(0)
       default: throw new Error(`unknown command ${String(command.cmd)}`)
     }

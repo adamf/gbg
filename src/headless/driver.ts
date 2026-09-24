@@ -9,7 +9,7 @@
  */
 
 import type { GameLibrary, LevelRef } from '../formats/library.js'
-import { GameSession, type MoveCommand, type SessionUi, type Snapshot } from '../engine/session.js'
+import { GameSession, type MoveCommand, type SessionUi, type SheetData, type Snapshot, type SpellChoice } from '../engine/session.js'
 import type { Member } from '../engine/roster.js'
 import type { Battle, Fighter } from '../engine/battle.js'
 import type { Rgba } from '../formats/ega.js'
@@ -147,6 +147,14 @@ export class HeadlessGame {
   look(): Promise<void> { return this.run(() => this.need().look()) }
   /** For testing: straight to a level, as arriving there would. */
   enter(ref: LevelRef): Promise<void> { return this.run(() => this.need().enterLevel(ref)) }
+  /** A member's sheet as data: numbers, pack, spells. */
+  sheet(index: number): Promise<SheetData | undefined> { return this.need().sheetData(index) }
+  /** Readies an item or puts it down; the words when it cannot be. */
+  toggleItem(index: number, at: number): Promise<string | undefined> { return this.need().toggleItem(index, at) }
+  /** What a caster may prepare, by class and level. */
+  spellChoices(index: number): Promise<SpellChoice[]> { return this.need().spellChoices(index) }
+  /** What a caster will have after resting. */
+  setPrepared(index: number, ids: readonly number[]): Promise<void> { return this.run(() => this.need().setPrepared(index, ids)) }
   snapshot(): Snapshot { return this.need().snapshot() }
   restore(snapshot: Snapshot): Promise<void> { return this.run(() => this.need().load(snapshot)) }
 
