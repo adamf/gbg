@@ -1314,8 +1314,9 @@ export class GameSession {
     this.memory.write(POOL_ADDRESSES.timeMinutesOnes, minute % 10)
   }
 
-  get time(): { hour: number; minute: number } {
+  get time(): { hour: number; minute: number; day: number } {
     return {
+      day: this.memory.read(POOL_ADDRESSES.timeDay),
       hour: this.memory.read(POOL_ADDRESSES.timeHour),
       minute: this.memory.read(POOL_ADDRESSES.timeMinutesTens) * 10 + this.memory.read(POOL_ADDRESSES.timeMinutesOnes),
     }

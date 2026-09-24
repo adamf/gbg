@@ -2,18 +2,26 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gold Box Web</title>
 <style>
   :root {
     color-scheme: dark;
     --bg: #07080c;
     --panel: #11141c;
+    --panel-2: #161a24;
     --panel-edge: #232838;
     --ink: #e6e9f0;
     --ink-dim: #99a1b3;
     --accent: #c9a227;
     --accent-ink: #1a1408;
+    --parchment: #f0e6cf;
+    --parchment-bg: #14100ae6;
+    --parchment-edge: #5e4c22;
+    --hp-good: #5fb87a;
+    --hp-hurt: #e0a05f;
+    --hp-bad: #e07a5f;
+    --side: 340px;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -22,6 +30,7 @@
     color: var(--ink);
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
   button {
     font: inherit;
@@ -31,10 +40,15 @@
     background: #1a1f2b;
     color: var(--ink);
     padding: 8px 14px;
+    touch-action: manipulation;
   }
   button:hover { border-color: #3a4256; }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
   button:disabled { opacity: .5; cursor: default; }
+  kbd {
+    background: #232838; border-radius: 4px; padding: 1px 5px; color: var(--ink);
+    font: 11.5px ui-monospace, monospace;
+  }
 
   /* ---- start screen ---- */
   #start {
@@ -58,96 +72,58 @@
   #status.error { color: #e07a5f; }
   #levels { margin-top: 18px; display: none; }
   #levels select { width: 100%; padding: 9px; border-radius: 8px; background: #1a1f2b; color: var(--ink); border: 1px solid var(--panel-edge); font: inherit; }
-  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
-
-  /* ---- play screen ---- */
-  #play { position: absolute; inset: 0; display: none; }
-  #view { width: 100%; height: 100%; display: block; }
-  #hud {
-    position: absolute; top: 14px; right: 14px; width: 300px;
-    background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
-    padding: 12px; backdrop-filter: blur(6px);
-  }
-  #hud h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
-  #map { width: 100%; aspect-ratio: 1; display: block; border-radius: 8px; background: #0b0d12; }
-  #where { margin-top: 8px; font-size: 12.5px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
-  #keys {
-    position: absolute; bottom: 14px; left: 14px; z-index: 1;
-    background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
-    padding: 10px 14px; font-size: 12.5px; color: var(--ink-dim); backdrop-filter: blur(6px);
-  }
-  #keys kbd {
-    background: #232838; border-radius: 4px; padding: 1px 5px; color: var(--ink);
-    font: 11.5px ui-monospace, monospace;
-  }
-  #back { position: absolute; top: 14px; left: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
   #warnings { margin-top: 10px; font-size: 12.5px; color: #e0a05f; }
 
-  /* ---- the game's text box ---- */
-  #text {
-    position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%);
-    width: min(720px, calc(100% - 400px));
-    background: #14100ae6; border: 1px solid #5e4c22; border-radius: 12px;
-    padding: 14px 18px; backdrop-filter: blur(6px);
-    display: none;
+  /* ---- play screen: a stage, a sidebar, a bottom bar ---- */
+  #play {
+    position: absolute; inset: 0; display: none;
+    grid-template-columns: minmax(0, 1fr) var(--side);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 10px; padding: 10px;
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   }
-  #text.shown { display: block; }
-  #textLog {
-    white-space: pre-wrap; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e6cf;
-    max-height: 13.5em; overflow-y: auto;
+  #play.shown { display: grid; }
+  #stage {
+    grid-column: 1; grid-row: 1; position: relative; min-height: 0; min-width: 0;
+    border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--panel-edge);
   }
-  #menuPrompt { margin-top: 8px; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e6cf; }
-  #menu { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  #menu:empty { display: none; }
-  #menu button { background: #2a2113; border-color: #5e4c22; color: #f0e6cf; }
-  #menu button:hover { border-color: #c9a227; }
-  #menu button kbd { color: #b99a48; font: 11.5px ui-monospace, monospace; margin-right: 6px; }
-  #menu.vertical { flex-direction: column; align-items: flex-start; }
-  #menu input { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid #5e4c22; background: #1a140a; color: #f0e6cf; }
+  #view { width: 100%; height: 100%; display: block; }
+  #back { position: absolute; top: 10px; left: 10px; z-index: 3; background: #0d1017c0; backdrop-filter: blur(6px); }
+  #notes {
+    position: absolute; top: 12px; left: 110px; right: 12px; z-index: 3; font-size: 12px; color: #8a93a6;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+  }
   #pic {
-    position: absolute; top: 64px; left: 14px; width: 320px; max-width: calc(100% - 300px);
+    position: absolute; top: 56px; left: 10px; width: min(320px, 40%);
     image-rendering: pixelated; border: 1px solid var(--panel-edge); border-radius: 8px; background: #000;
-    display: none;
+    display: none; z-index: 2;
   }
   #pic.shown { display: block; }
   #sprite {
-    position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%);
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
     image-rendering: pixelated; pointer-events: none; display: none;
     filter: drop-shadow(0 0 18px #000);
   }
   #sprite.shown { display: block; }
   #overhead {
-    position: absolute; left: calc((100% - 340px) / 2); top: 46%; transform: translate(-50%, -50%);
-    width: min(90vh, calc(100% - 380px)); image-rendering: pixelated;
-    border: 1px solid var(--panel-edge); border-radius: 12px; background: #0b0d12; display: none;
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(100%, calc((100% - 0px)), 1100px); max-height: 100%; image-rendering: pixelated;
+    background: #0b0d12; display: none;
   }
   #overhead.shown { display: block; }
-  #party {
-    position: absolute; top: 420px; right: 14px; width: 330px;
-    background: #0d1017d9; border: 1px solid var(--panel-edge); border-radius: 12px;
-    padding: 10px 12px; backdrop-filter: blur(6px); font-size: 12.5px;
-    display: none;
-  }
-  #party.shown { display: block; }
-  #party table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  #party td { padding: 2px 0; white-space: nowrap; }
-  #party td.n { overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-  #party td.hp { min-width: 44px; }
-  #party td.r { text-align: right; color: var(--ink-dim); padding-left: 6px; white-space: nowrap; }
-  #party tr.hurt td.hp { color: #e0a05f; }
-  #party tr.down td { color: #e07a5f; }
-  #party tr.picked td.n { color: var(--accent); }
   #battle {
-    position: absolute; top: 14px; left: 14px; right: 330px; max-width: max-content;
+    position: absolute; top: 10px; left: 10px; max-width: calc(100% - 20px); max-height: calc(100% - 20px);
     background: #5c5c5c; border: 6px double #b03a2e; border-radius: 4px;
-    padding: 0; display: none; box-shadow: 0 12px 40px #000c;
+    padding: 0; display: none; box-shadow: 0 12px 40px #000c; z-index: 2; overflow: auto;
   }
   #battle.shown { display: block; }
   #battleRow { display: flex; }
-  #battleMap { display: block; image-rendering: pixelated; max-height: 70vh; max-width: calc(100vw - 620px); width: auto; cursor: crosshair; }
+  #battleMap { display: block; image-rendering: pixelated; max-height: 60vh; width: auto; cursor: crosshair; }
   #battleInfo {
-    margin: 0; padding: 14px 18px; min-width: 220px; border-left: 6px double #b03a2e;
-    font: 600 17px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; white-space: pre; background: #5c5c5c;
+    margin: 0; padding: 14px 18px; min-width: 200px; border-left: 6px double #b03a2e;
+    font: 600 16px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; white-space: pre; background: #5c5c5c;
   }
   #battleActions {
     display: flex; gap: 0; justify-content: flex-start; flex-wrap: wrap;
@@ -155,14 +131,116 @@
   }
   #battleActions button {
     background: none; border: none; border-radius: 0; padding: 4px 12px;
-    font: 700 17px ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; letter-spacing: .04em;
+    font: 700 16px ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; letter-spacing: .04em;
   }
   #battleActions button:hover { color: #fff; }
-  #battleActions button kbd { color: #d7d7a0; font: 12px ui-monospace, monospace; margin-right: 6px; }
+  #battleActions button kbd { color: #d7d7a0; background: none; font: 12px ui-monospace, monospace; margin-right: 6px; padding: 0; }
   #battleActions button:disabled { color: #8e8e8e; }
-  #notes {
-    position: absolute; top: 14px; left: 120px; font-size: 12px; color: #8a93a6; max-width: calc(100% - 420px);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+
+  /* ---- sidebar ---- */
+  #side {
+    grid-column: 2; grid-row: 1 / 3; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 12px; padding: 12px;
+  }
+  #hud h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  #place { display: grid; grid-template-columns: 56px 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
+  #compass {
+    width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--panel-edge); background: var(--panel-2);
+    position: relative; display: grid; place-items: center; font-size: 10px; color: var(--ink-dim);
+  }
+  #compass i { position: absolute; font-style: normal; }
+  #compass i.n { top: 2px; } #compass i.s { bottom: 2px; } #compass i.e { right: 5px; } #compass i.w { left: 5px; }
+  #needle {
+    width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
+    border-bottom: 20px solid var(--accent); transform-origin: 50% 100%; position: absolute; top: 8px;
+    transition: transform .15s;
+  }
+  #where { font-size: 13px; font-variant-numeric: tabular-nums; }
+  #clock { font-size: 12.5px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  #map { width: min(100%, 200px); aspect-ratio: 1; display: block; margin: 0 auto; border-radius: 8px; background: #0b0d12; }
+  #party { display: none; padding: 6px; }
+  #party.shown { display: block; }
+  .member {
+    display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; padding: 5px 8px; border-radius: 8px;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .member:hover { background: var(--panel-2); }
+  .member.picked { border-color: var(--accent); }
+  .member .name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .member .cls { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
+  .member .bar { grid-column: 1 / 3; height: 5px; border-radius: 3px; background: #0b0d12; overflow: hidden; }
+  .member .bar i { display: block; height: 100%; background: var(--hp-good); border-radius: 3px; }
+  .member.hurt .bar i { background: var(--hp-hurt); }
+  .member.down .bar i { background: var(--hp-bad); }
+  .member .hp { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .member .tags { font-size: 11.5px; color: var(--ink-dim); text-align: right; white-space: nowrap; }
+  .member.down .hp, .member.down .name { color: var(--hp-bad); }
+  .badge { display: inline-block; padding: 0 6px; border-radius: 10px; background: #2a2d3a; font-size: 11px; margin-left: 4px; }
+  .badge.bad { background: #4a2a26; color: #f0b0a0; }
+
+  /* ---- bottom: the text box and the controls ---- */
+  #bottom { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+  #text {
+    background: var(--parchment-bg); border: 1px solid var(--parchment-edge); border-radius: 12px;
+    padding: 12px 16px; min-height: 64px; visibility: hidden;
+  }
+  #text.shown { visibility: visible; }
+  #textLog {
+    white-space: pre-wrap; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--parchment);
+    max-height: 9em; overflow-y: auto;
+  }
+  #menuPrompt { margin-top: 6px; font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--parchment); }
+  #menuPrompt:empty { display: none; }
+  #menu { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  #menu:empty { display: none; }
+  #menu button { background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
+  #menu button:hover { border-color: var(--accent); }
+  #menu button kbd { color: #b99a48; background: none; padding: 0; margin-right: 6px; }
+  #menu.vertical { flex-direction: column; align-items: flex-start; }
+  #menu input { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--parchment-edge); background: #1a140a; color: var(--parchment); }
+  #controls { display: flex; gap: 10px; align-items: end; }
+  .pad { display: grid; grid-template-columns: repeat(3, 44px); grid-auto-rows: 44px; gap: 4px; }
+  .pad button { padding: 0; font-size: 17px; display: grid; place-items: center; }
+  .pad button:active { background: var(--accent); color: var(--accent-ink); }
+  .pad .blank { visibility: hidden; }
+  #pad8 { display: none; }
+  #play.outdoors #pad8 { display: grid; }
+  #play.outdoors #pad4 { display: none; }
+  #actions { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; }
+  #actions button { padding: 8px 12px; font-size: 13px; text-align: left; }
+  #actions button.on { border-color: var(--accent); color: var(--accent); }
+  #actions button kbd { margin-right: 6px; }
+
+  /* ---- overlays: a character sheet, the log, the keys ---- */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10; display: none; place-items: center; background: #000000a0; padding: 20px;
+  }
+  .overlay.shown { display: grid; }
+  .overlay .box {
+    background: var(--parchment-bg); border: 1px solid var(--parchment-edge); border-radius: 12px; padding: 16px 20px;
+    max-width: min(720px, 100%); max-height: 100%; overflow: auto; color: var(--parchment); backdrop-filter: blur(8px);
+  }
+  .overlay pre { margin: 0; white-space: pre-wrap; font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+  .overlay .row { justify-content: flex-end; }
+  .overlay .row button { background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
+  #keys dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13.5px; }
+  #keys dt { text-align: right; } #keys dd { margin: 0; color: var(--ink-dim); }
+
+  @media (max-width: 900px) {
+    :root { --side: 100%; }
+    #play { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
+    #stage { grid-row: 1; }
+    #bottom { grid-row: 2; grid-column: 1; }
+    #side { grid-column: 1; grid-row: 3; flex-direction: row; overflow-x: auto; max-height: 200px; }
+    #side .card { min-width: 260px; }
+    #map { display: none; }
+  }
+  @media (max-width: 640px) {
+    #bottom { grid-template-columns: 1fr; }
+    #controls { justify-content: space-between; }
   }
 </style>
 </head>
@@ -171,7 +249,7 @@
 <div id="start">
   <div class="card">
     <h1>Gold Box Web</h1>
-    <p class="sub">Walks the dungeons of your own SSI Gold Box games in 3D.</p>
+    <p class="sub">Plays your own copy of Pool of Radiance in the browser, in 3D.</p>
 
     <p class="note">
       Point this at the folder holding a game you own — the one with <strong>POOL.CFG</strong>
@@ -192,11 +270,13 @@
     <div id="status"></div>
 
     <div id="levels">
-      <label class="note" for="levelSelect">Level</label>
-      <select id="levelSelect"></select>
       <div class="row">
         <button id="newGame" class="primary">New game</button>
         <button id="continue" hidden>Continue</button>
+      </div>
+      <label class="note" for="levelSelect" style="display:block;margin-top:16px">Or just look at a level</label>
+      <select id="levelSelect"></select>
+      <div class="row">
         <button id="enter">Explore this level</button>
       </div>
       <div id="warnings"></div>
@@ -205,34 +285,104 @@
 </div>
 
 <div id="play">
-  <canvas id="view"></canvas>
-  <button id="back">← Levels</button>
-  <div id="hud">
-    <h2 id="levelName">Level</h2>
-    <canvas id="map"></canvas>
-    <div id="where"></div>
-    <div id="clock" style="font-size:12.5px;color:var(--ink-dim)"></div>
-  </div>
-  <div id="party"></div>
-  <canvas id="pic"></canvas>
-  <canvas id="sprite"></canvas>
-  <canvas id="overhead"></canvas>
-  <div id="battle">
-    <div id="battleRow">
-      <canvas id="battleMap"></canvas>
-      <pre id="battleInfo"></pre>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <button id="back">← Levels</button>
+    <div id="notes"></div>
+    <canvas id="pic"></canvas>
+    <canvas id="sprite"></canvas>
+    <canvas id="overhead"></canvas>
+    <div id="battle">
+      <div id="battleRow">
+        <canvas id="battleMap"></canvas>
+        <pre id="battleInfo"></pre>
+      </div>
+      <div id="battleActions"></div>
     </div>
-    <div id="battleActions"></div>
   </div>
-  <div id="notes"></div>
-  <div id="text">
-    <div id="textLog"></div>
-    <div id="menuPrompt"></div>
-    <div id="menu"></div>
+
+  <aside id="side">
+    <section id="hud" class="card">
+      <h2 id="levelName">Level</h2>
+      <div id="place">
+        <div id="compass"><i class="n">N</i><i class="e">E</i><i class="s">S</i><i class="w">W</i><div id="needle"></div></div>
+        <div>
+          <div id="where"></div>
+          <div id="clock"></div>
+        </div>
+      </div>
+      <canvas id="map"></canvas>
+    </section>
+    <section id="party" class="card"></section>
+  </aside>
+
+  <div id="bottom">
+    <div id="text">
+      <div id="textLog"></div>
+      <div id="menuPrompt"></div>
+      <div id="menu"></div>
+    </div>
+    <div id="controls">
+      <div id="pad4" class="pad" aria-label="movement">
+        <button data-cmd="turnLeft" title="Turn left (Q)">↶</button>
+        <button data-cmd="forward" title="Forward (W)">↑</button>
+        <button data-cmd="turnRight" title="Turn right (E)">↷</button>
+        <button data-cmd="left" title="Sidestep left (A)">←</button>
+        <button data-cmd="back" title="Back (S)">↓</button>
+        <button data-cmd="right" title="Sidestep right (D)">→</button>
+      </div>
+      <div id="pad8" class="pad" aria-label="ride">
+        <button data-dir="7" title="Ride north-west">↖</button>
+        <button data-dir="0" title="Ride north">↑</button>
+        <button data-dir="1" title="Ride north-east">↗</button>
+        <button data-dir="6" title="Ride west">←</button>
+        <button class="blank" tabindex="-1">·</button>
+        <button data-dir="2" title="Ride east">→</button>
+        <button data-dir="5" title="Ride south-west">↙</button>
+        <button data-dir="4" title="Ride south">↓</button>
+        <button data-dir="3" title="Ride south-east">↘</button>
+      </div>
+      <div id="actions">
+        <button data-act="camp"><kbd>C</kbd>Camp</button>
+        <button data-act="view"><kbd>V</kbd>View</button>
+        <button data-act="search" id="searchButton"><kbd>F</kbd>Search</button>
+        <button data-act="look"><kbd>L</kbd>Look</button>
+        <button data-act="log"><kbd>⌘</kbd>Log</button>
+        <button data-act="keys"><kbd>?</kbd>Keys</button>
+      </div>
+    </div>
   </div>
-  <div id="keys">
-    <kbd>W</kbd>/<kbd>↑</kbd> forward · <kbd>S</kbd> back · <kbd>A</kbd>/<kbd>D</kbd> sidestep ·
-    <kbd>Q</kbd>/<kbd>←</kbd> <kbd>E</kbd>/<kbd>→</kbd> turn · <kbd>C</kbd> camp · <kbd>V</kbd> view · <kbd>B</kbd> bandage · <kbd>F</kbd> search · <kbd>L</kbd> look · <kbd>1</kbd>–<kbd>9</kbd> choose · <kbd>⏎</kbd> continue
+
+  <div id="sheet" class="overlay">
+    <div class="box">
+      <pre id="sheetText"></pre>
+      <div class="row"><button id="sheetEquip">Equip</button><button id="sheetDone" class="primary">Done</button></div>
+    </div>
+  </div>
+  <div id="log" class="overlay">
+    <div class="box">
+      <pre id="logText"></pre>
+      <div class="row"><button id="logDone" class="primary">Done</button></div>
+    </div>
+  </div>
+  <div id="keys" class="overlay">
+    <div class="box">
+      <strong>Keys</strong>
+      <dl>
+        <dt><kbd>W</kbd> <kbd>↑</kbd></dt><dd>forward</dd>
+        <dt><kbd>S</kbd> <kbd>↓</kbd></dt><dd>back</dd>
+        <dt><kbd>A</kbd> <kbd>D</kbd></dt><dd>sidestep</dd>
+        <dt><kbd>Q</kbd> <kbd>E</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>turn — outdoors, an eighth of the compass</dd>
+        <dt><kbd>X</kbd></dt><dd>turn around</dd>
+        <dt><kbd>C</kbd></dt><dd>camp: rest, memorise, cast, use, save</dd>
+        <dt><kbd>V</kbd></dt><dd>view a character; the party list opens one too</dd>
+        <dt><kbd>F</kbd></dt><dd>search on and off</dd>
+        <dt><kbd>L</kbd></dt><dd>look at the square</dd>
+        <dt><kbd>1</kbd>–<kbd>9</kbd> <kbd>⏎</kbd></dt><dd>answer a menu</dd>
+        <dt><kbd>N</kbd> <kbd>P</kbd></dt><dd>next and previous page of a long menu</dd>
+      </dl>
+      <div class="row"><button id="keysDone" class="primary">Done</button></div>
+    </div>
   </div>
 </div>
 

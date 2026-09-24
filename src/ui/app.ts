@@ -5,7 +5,7 @@
 
 import { GameLibrary, type FileSource, type LevelRef } from '../formats/library.js'
 import type { Rgba } from '../formats/ega.js'
-import type { GeoMap } from '../formats/geo.js'
+import { DIRECTIONS, type GeoMap } from '../formats/geo.js'
 import { DungeonViewer } from '../render/viewer.js'
 import type { PartyState } from '../engine/party.js'
 import { GameSession, type MoveCommand, type SessionUi, type Snapshot } from '../engine/session.js'
@@ -60,6 +60,20 @@ let battleArt: BattleArt | undefined
 /** The original's own abbreviations for the party panel. */
 const STATUS_SHORT: Record<string, string> = { unconscious: 'UNCON', dying: 'DYING', dead: 'DEAD', asleep: 'SLEEP', held: 'HELD', stoned: 'STONE', running: 'FLED', animated: 'ANIM', gone: 'GONE', 'temporarily gone': 'GONE' }
 const battleInfo = el('battleInfo')
+const needle = el('needle')
+const sheetOverlay = el('sheet')
+const sheetText = el('sheetText')
+const logOverlay = el('log')
+const logText = el('logText')
+const keysOverlay = el('keys')
+const searchButton = el('searchButton')
+/** Whichever overlay is up, so the keys go to it. */
+let openOverlay: HTMLElement | undefined
+function showOverlay(which: HTMLElement): void { closeOverlays(); which.classList.add('shown'); openOverlay = which }
+function closeOverlays(): void { for (const o of [sheetOverlay, logOverlay, keysOverlay]) o.classList.remove('shown'); openOverlay = undefined }
+/** Everything the game has said, for the log. */
+const history: string[] = []
+const HISTORY = 300
 
 /** The side panel the original kept: who is up, their hit points, armour and weapon. */
 function showFighter(f: Fighter | undefined): void {
@@ -185,6 +199,8 @@ const pageUi: SessionUi = {
 
   print(text, clear) {
     if (clear) textLog.textContent = ''
+    if (clear || history.length === 0) history.push(text); else history[history.length - 1] += text
+    if (history.length > HISTORY) history.splice(0, history.length - HISTORY)
     // The original appended text to the same line; a printed number is part of a sentence.
     textLog.textContent += text
     textPanel.classList.add('shown')
@@ -450,27 +466,29 @@ const pageUi: SessionUi = {
         return
       }
     }
-    const table = document.createElement('table')
-    members.forEach(({ character: c }, index) => {
-      const row = document.createElement('tr')
+    const rows = members.map(({ character: c }, index) => {
+      const row = document.createElement('div')
+      row.className = 'member'
       if (index === selected) row.classList.add('picked')
       if (c.status !== 'okay') row.classList.add('down')
       else if (c.hpCurrent < c.hpMax) row.classList.add('hurt')
-      const cells: [string, string][] = [
-        ['n', c.name],
-        ['r', `${className(c).split('/').map((part) => part.slice(0, 2).toUpperCase()).join('/')} ${characterLevel(c)}`],
-        ['r hp', c.status === 'okay' ? `${c.hpCurrent}/${c.hpMax}` : STATUS_SHORT[c.status] ?? c.status.slice(0, 4).toUpperCase()],
-        ['r', c.memorised.length > 0 ? `${c.memorised.length}✦ AC ${c.ac}` : `AC ${c.ac}`],
-      ]
-      for (const [cls, text] of cells) {
-        const cell = document.createElement('td')
-        cell.className = cls
-        cell.textContent = text
-        row.append(cell)
-      }
-      table.append(row)
+      const name = document.createElement('div'); name.className = 'name'; name.textContent = c.name
+      const cls = document.createElement('div'); cls.className = 'cls'
+      cls.textContent = `${className(c).split('/').map((part) => part.slice(0, 2).toUpperCase()).join('/')} ${characterLevel(c)}`
+      const bar = document.createElement('div'); bar.className = 'bar'
+      const fill = document.createElement('i'); fill.style.width = `${Math.max(0, Math.min(100, (100 * c.hpCurrent) / Math.max(1, c.hpMax)))}%`
+      bar.append(fill)
+      const hp = document.createElement('div'); hp.className = 'hp'
+      hp.textContent = `${c.hpCurrent}/${c.hpMax}`
+      if (c.status !== 'okay') { const badge = document.createElement('span'); badge.className = 'badge bad'; badge.textContent = STATUS_SHORT[c.status] ?? c.status.toUpperCase(); hp.append(badge) }
+      const tags = document.createElement('div'); tags.className = 'tags'
+      tags.textContent = `AC ${c.ac}${c.memorised.length > 0 ? ` · ${c.memorised.length}✦` : ''}`
+      row.append(name, cls, bar, hp, tags)
+      row.title = 'View this character'
+      row.addEventListener('click', () => { void openSheet(index) })
+      return row
     })
-    partyPanel.replaceChildren(table)
+    partyPanel.replaceChildren(...rows)
     partyPanel.classList.add('shown')
   },
 
@@ -578,7 +596,7 @@ async function continueGame(): Promise<void> {
 async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
   setStatus('Building the level…')
   startScreen.style.display = 'none'
-  playScreen.style.display = 'block'
+  playScreen.classList.add('shown')
   textLog.textContent = ''
   clearMenu()
   textPanel.classList.remove('shown')
@@ -641,9 +659,13 @@ function refreshHud(state: PartyState): void {
   }
 
   if (session) {
-    const { hour, minute } = session.time
+    const { day, hour, minute } = session.time
     const gold = session.roster.members.reduce((n, m) => n + (m.character.money[3] ?? 0), 0)
-    clockLine.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}${session.searching ? ' · SEARCHING' : ''} · ${gold} gold`
+    clockLine.textContent = `Day ${day} · ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} · ${gold} gold`
+    const eighth = session.overhead ? session.overlandPosition.facing : DIRECTIONS.indexOf(state.facing) * 2
+    needle.style.transform = `rotate(${eighth * 45}deg)`
+    playScreen.classList.toggle('outdoors', session.overhead)
+    searchButton.classList.toggle('on', session.searching)
   }
 }
 
@@ -651,9 +673,55 @@ function leaveLevel(): void {
   viewer?.stop()
   session = undefined
   continueButton.hidden = storedSnapshot() === undefined
-  playScreen.style.display = 'none'
+  playScreen.classList.remove('shown')
   startScreen.style.display = 'grid'
 }
+
+/** A character's sheet in an overlay, with the way to the equipment menu. */
+async function openSheet(index: number): Promise<void> {
+  const current = session
+  if (!current || current.busy || openMenu) return
+  sheetText.textContent = await current.sheet(index)
+  showOverlay(sheetOverlay)
+  el('sheetEquip').onclick = () => { closeOverlays(); void current.equip(index) }
+}
+
+/** A movement command from a key or a pad button. */
+function doMove(command: MoveCommand): void {
+  if (!session || session.busy || openMenu || openOverlay) return
+  // Outdoors the same commands ride: turns swing the compass, steps take an hour a square.
+  if (session.overhead) { void session.move(command); return }
+  // One step at a time: the viewer animates each, and the session stays in step with it.
+  if (viewer?.isMoving) return
+  // The session moves the party and runs the script; the viewer animates the same step.
+  void session.move(command)
+  viewer?.command(command)
+}
+
+function doAction(action: string): void {
+  if (action === 'log') { logText.textContent = history.join('\n\n'); showOverlay(logOverlay); logText.parentElement!.scrollTop = 1e9; return }
+  if (action === 'keys') { showOverlay(keysOverlay); return }
+  if (!session || session.busy || openMenu || openOverlay) return
+  const current = session
+  if (action === 'camp') void current.camp()
+  else if (action === 'view') void pageUi.who('VIEW WHO?', current.roster.members).then((index) => openSheet(index))
+  else if (action === 'search') { void current.toggleSearch().then(() => refreshHud(current.party)) }
+  else if (action === 'look') void current.look()
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>('#pad4 button[data-cmd]')) {
+  button.addEventListener('click', () => doMove(button.dataset.cmd as MoveCommand))
+}
+for (const button of document.querySelectorAll<HTMLButtonElement>('#pad8 button[data-dir]')) {
+  button.addEventListener('click', () => { if (session && !session.busy && !openMenu && session.overhead) void session.moveOverland(Number(button.dataset.dir)) })
+}
+for (const button of document.querySelectorAll<HTMLButtonElement>('#actions button[data-act]')) {
+  button.addEventListener('click', () => doAction(button.dataset.act!))
+}
+for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
+for (const overlay of [sheetOverlay, logOverlay, keysOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+// The stage changes size as the text box grows; the view keeps up.
+new ResizeObserver(() => viewer?.resize()).observe(el('stage'))
 
 // ---- input ---------------------------------------------------------------
 
@@ -672,7 +740,9 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault()
     return
   }
-  if (playScreen.style.display !== 'block') return
+  if (!playScreen.classList.contains('shown')) return
+  // An overlay swallows the keys but Escape and Enter.
+  if (openOverlay) { if (event.key === 'Escape' || event.key === 'Enter') { event.preventDefault(); closeOverlays() } return }
 
   if (openTurn && !openMenu) {
     const { battle, fighter, refresh } = openTurn
@@ -722,44 +792,21 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyV' && session && !session.busy) {
     event.preventDefault()
     const current = session
-    void pageUi.who('VIEW WHO?', current.roster.members).then(async (index) => {
-      pageUi.print(await current.sheet(index), true)
-      const next = await pageUi.menu(undefined, ['EQUIP', 'DONE'], 'horizontal')
-      if (next === 0) await current.equip(index)
-    })
+    void pageUi.who('VIEW WHO?', current.roster.members).then((index) => openSheet(index))
     return
   }
 
-  if (event.code === 'KeyF' && session && !session.busy) {
+  const action = ({ KeyF: 'search', KeyL: 'look', KeyC: 'camp', Slash: 'keys' } as Record<string, string>)[event.code]
+  if (action && session && !session.busy) {
     event.preventDefault()
-    session.toggleSearch()
-    refreshHud(session.party)
-    return
-  }
-
-  if (event.code === 'KeyL' && session && !session.busy) {
-    event.preventDefault()
-    void session.look()
-    return
-  }
-
-  if (event.code === 'KeyC' && session && !session.busy) {
-    event.preventDefault()
-    void session.camp()
+    doAction(action)
     return
   }
 
   const command = KEY_COMMANDS[event.code]
   if (!command || !session || session.busy) return
   event.preventDefault()
-  // Outdoors the same keys ride: turns swing the compass, steps take an hour a square.
-  if (session.overhead) { void session.move(command); return }
-  // One step at a time: the viewer animates each, and the session stays in step with it.
-  if (viewer?.isMoving) return
-
-  // The session moves the party and runs the script; the viewer animates the same step.
-  void session.move(command)
-  viewer?.command(command)
+  doMove(command)
 })
 
 window.addEventListener('resize', () => viewer?.resize())
