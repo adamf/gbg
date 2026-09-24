@@ -71,6 +71,8 @@ const bookBody = el('bookBody')
 const tip = el('tip')
 const turns = el('turns')
 const shopOverlay = el('shop')
+const hallOverlay = el('hall')
+const campOverlay = el('camp')
 const logOverlay = el('log')
 const logText = el('logText')
 const keysOverlay = el('keys')
@@ -78,7 +80,9 @@ const searchButton = el('searchButton')
 /** Whichever overlay is up, so the keys go to it. */
 let openOverlay: HTMLElement | undefined
 function showOverlay(which: HTMLElement): void { closeOverlays(); which.classList.add('shown'); openOverlay = which }
-function closeOverlays(): void { for (const o of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay]) o.classList.remove('shown'); openOverlay = undefined; bookClosed?.(); bookClosed = undefined; shopClosed?.(); shopClosed = undefined }
+function closeOverlays(): void { for (const o of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay]) o.classList.remove('shown'); openOverlay = undefined; bookClosed?.(); bookClosed = undefined; shopClosed?.(); shopClosed = undefined; hallClosed?.(); hallClosed = undefined; campClosed?.(); campClosed = undefined }
+let hallClosed: (() => void) | undefined
+let campClosed: (() => void) | undefined
 /** Resolves the shop panel's promise when it closes. */
 let shopClosed: (() => void) | undefined
 /** Resolves the memorisation panel's promise when it closes. */
@@ -469,6 +473,83 @@ const pageUi: SessionUi = {
   },
 
   equip: (index) => openSheet(index),
+
+  train(view) {
+    return new Promise<void>((resolve) => {
+      const words = el('hallWords')
+      const render = (): void => {
+        const purse = view.purse()
+        el('hallRoster').replaceChildren(...view.members().map((m, who) => {
+          const row = document.createElement('div'); row.className = 'who'
+          const name = document.createElement('div'); name.className = 'n'; name.textContent = `${m.name} · ${m.gold} gold`
+          const acts = document.createElement('div'); acts.className = 'acts'
+          const detail = document.createElement('div'); detail.className = 'd'
+          detail.textContent = m.tracks.map((t) => `${t.track.toUpperCase()} ${t.level}${t.level >= t.limit ? ' (AT THE RACE’S LIMIT)' : t.ready ? ' — READY' : Number.isFinite(t.needed) ? ` — ${t.needed} XP TO ${t.level + 1}` : ' (AT THE TOP OF THE TABLE)'}`).join(' · ')
+          for (const t of m.tracks) {
+            if (!t.ready) continue
+            const b = document.createElement('button'); b.className = 'go'
+            const alone = m.gold >= view.cost
+            b.textContent = alone ? `Train as ${t.track} — ${view.cost} gold` : purse >= view.cost ? `Pool coins & train as ${t.track}` : `Train as ${t.track} — cannot pay`
+            b.disabled = !alone && purse < view.cost
+            b.addEventListener('click', () => { void view.train(who, t.track, !alone).then((said) => { words.textContent = said; render() }) })
+            acts.append(b)
+          }
+          row.append(name, acts, detail)
+          return row
+        }))
+      }
+      el('hallDone').onclick = closeOverlays
+      words.textContent = ''
+      hallClosed = resolve
+      render()
+      showOverlay(hallOverlay)
+    })
+  },
+
+  camp(view) {
+    return new Promise<void>((resolve) => {
+      const words = el('campWords')
+      let open = true
+      // An action that talks through the text box takes the panel down and puts it back after.
+      const run = (work: () => Promise<'stay' | 'leave'>): void => {
+        campOverlay.classList.remove('shown'); openOverlay = undefined
+        void work().then((next) => {
+          if (!open) return
+          if (next === 'leave') { open = false; resolve(); return }
+          render(); campOverlay.classList.add('shown'); openOverlay = campOverlay
+        })
+      }
+      const render = (): void => {
+        const state = view.state()
+        el('campRoster').replaceChildren(...state.members.map((m, who) => {
+          const row = document.createElement('div'); row.className = `who${m.status !== 'okay' ? ' down' : m.hp < m.hpMax ? ' hurt' : ''}`
+          const name = document.createElement('div'); name.className = 'n'; name.textContent = m.name
+          const acts = document.createElement('div'); acts.className = 'acts'
+          if (m.caster) { const b = document.createElement('button'); b.textContent = `Memorise (${m.prepared}/${m.slots} chosen)`; b.addEventListener('click', () => run(() => view.memorise(who))); acts.append(b) }
+          const pool = document.createElement('button'); pool.textContent = 'Pool coins here'; pool.addEventListener('click', () => run(() => view.pool(who))); acts.append(pool)
+          const bar = document.createElement('div'); bar.className = 'bar'; const fill = document.createElement('i'); fill.style.width = `${Math.max(0, Math.min(100, (100 * m.hp) / Math.max(1, m.hpMax)))}%`; bar.append(fill)
+          const detail = document.createElement('div'); detail.className = 'd'
+          detail.textContent = `HP ${m.hp}/${m.hpMax} · ${m.status.toUpperCase()} · ${m.gold} gold${m.caster ? ` · ${m.memorised} of ${m.slots} spells memorised` : ''}`
+          row.append(name, acts, bar, detail)
+          return row
+        }))
+        const acts = el('campActs'); acts.replaceChildren()
+        const button = (label: string, cls: string, work: () => Promise<'stay' | 'leave'>): void => { const b = document.createElement('button'); b.textContent = label; b.className = cls; b.addEventListener('click', () => run(work)); acts.append(b) }
+        const days = Math.floor(state.hours / 24)
+        button(`Rest ${days > 0 ? `${days} day${days === 1 ? '' : 's'}` : `${state.hours} hour${state.hours === 1 ? '' : 's'}`}`, 'primary', () => view.rest())
+        button('Cast', '', () => view.cast())
+        button('Use', '', () => view.use())
+        button('Scribe', '', () => view.scribe())
+        button('Save game', '', () => view.save())
+        button('Export DOS save', '', () => view.exportDos())
+      }
+      el('campDone').onclick = () => { open = false; closeOverlays(); resolve() }
+      words.textContent = ''
+      campClosed = () => { if (open) { open = false; resolve() } }
+      render()
+      showOverlay(campOverlay)
+    })
+  },
 
   shop(view) {
     return new Promise<void>((resolve) => {
@@ -974,7 +1055,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#actions butt
   button.addEventListener('click', () => doAction(button.dataset.act!))
 }
 for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
-for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
 // Over a fighter on the field, a word or two about them.
 battleCanvas.addEventListener('mousemove', (event) => {
   const battle = openTurn?.battle ?? (window as unknown as { gbg?: { battle?: Battle } }).gbg?.battle

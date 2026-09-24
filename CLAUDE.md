@@ -99,8 +99,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   foes with a tooltip over each fighter, spells are aimed on the field, the wilderness
   is ridden by clicking the map, the sheet's pack is readied by clicking, camp's
   MEMORISE is a book with a count against every spell, a shop is a panel with the
-  buyer picked and every ware and pack item priced, and a strip above the field
-  shows the round's order of play.
+  buyer picked and every ware and pack item priced, the training hall a panel with
+  each class's level and the experience still needed and a Train button where one
+  qualifies, camp a panel with everyone's wounds and spell slots and the hours a rest
+  will take, and a strip above the field shows the round's order of play.
 - **Headless play** — `src/headless/driver.ts` runs a session with no page: every
   prompt queues for the caller and the state is a plain object. `npm run headless --
   <folder>` is that as a JSON-lines conversation on stdin/stdout, and `npm run mcp --

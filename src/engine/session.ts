@@ -20,7 +20,7 @@ import {
 } from './ecl-vm.js'
 import { backward, forward, strafeLeft, strafeRight, turnAround, turnLeft, turnRight, type PartyState } from './party.js'
 import { Roster, type Member } from './roster.js'
-import { characterLevel, className, raceName, type Character, type Item } from '../formats/character.js'
+import { characterLevel, className, CLASS_TRACKS, raceName, type Character, type Item } from '../formats/character.js'
 export type { Spell }
 import { Combat, labelMonsters, type Combatant } from './combat.js'
 import { Battle, type Fighter } from './battle.js'
@@ -32,7 +32,7 @@ import { itemDisplayName } from '../formats/items.js'
 import { spellById, type Spell, type SpellTarget } from '../formats/spells.js'
 import { canReadScroll, canScribe, isScroll, readFromScroll, scribe, scrollReader, scrollSpells } from './scrolls.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
-import { readyToTrain, train, TRAINING_COST } from './training.js'
+import { levelLimit, nextLevelAt, readyToTrain, shareOfExperience, train, TRAINING_COST, type Track } from './training.js'
 import { ready as readyItem, recompute, slotOf, unready } from './equipment.js'
 import type { ItemType } from '../formats/items.js'
 import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writer.js'
@@ -46,6 +46,29 @@ export interface ShopView {
   buy(ware: number, member: number): Promise<string>
   sell(member: number, item: number): Promise<string>
   appraise(member: number): Promise<string>
+}
+
+/** The training hall for a page that lays it out: everyone, their classes, what each still needs, who may train now. */
+export interface TrainingView {
+  cost: number
+  members(): { name: string; gold: number; tracks: { track: string; level: number; limit: number; needed: number; ready: boolean }[] }[]
+  /** The party's gold together. */
+  purse(): number
+  /** Trains one member in one class, pooling the party's coins onto them first if asked; the words. */
+  train(member: number, track: string, pool: boolean): Promise<string>
+}
+
+/** Camp for a page that lays it out: the party's state and the things to do. Each action says whether camp goes on. */
+export interface CampView {
+  state(): { hours: number; members: { name: string; hp: number; hpMax: number; status: string; memorised: number; prepared: number; slots: number; gold: number; caster: boolean }[] }
+  rest(): Promise<'stay' | 'leave'>
+  memorise(member: number): Promise<'stay' | 'leave'>
+  cast(): Promise<'stay' | 'leave'>
+  use(): Promise<'stay' | 'leave'>
+  pool(member: number): Promise<'stay' | 'leave'>
+  save(): Promise<'stay' | 'leave'>
+  exportDos(): Promise<'stay' | 'leave'>
+  scribe(): Promise<'stay' | 'leave'>
 }
 
 /** A character's sheet as data. */
@@ -118,6 +141,10 @@ export interface SessionUi {
   memorise?(index: number): Promise<void>
   /** A page with a shop panel trades through the view; it returns when the party leaves the shop. */
   shop?(view: ShopView): Promise<void>
+  /** A page with a training-hall panel; returns when the party leaves the hall. */
+  train?(view: TrainingView): Promise<void>
+  /** A page with a camp panel; returns when the party breaks camp. */
+  camp?(view: CampView): Promise<void>
   /**
    * A page that can point at the grid answers this instead of a menu: for an area
    * spell, the fighters under the blast at the square chosen; otherwise up to `count`
@@ -350,6 +377,33 @@ export class GameSession {
     const mask = this.memory.read(POOL_ADDRESSES.trainingMask)
     if (mask === 0) return
     const random = this.random
+    if (this.ui.train) {
+      const session = this
+      await this.ui.train({
+        cost: TRAINING_COST,
+        members: () => session.roster.members.map((m) => {
+          const c = m.character
+          const share = shareOfExperience(c)
+          const ready = readyToTrain(c, mask)
+          const tracks = CLASS_TRACKS.map((track, i) => ({ track, level: c.levels[i] ?? 0 })).filter((t) => t.level > 0).map((t) => ({
+            track: t.track, level: t.level, limit: levelLimit(c.race, t.track as Track),
+            needed: Math.max(0, nextLevelAt(t.track as Track, t.level) - share), ready: ready.includes(t.track as Track),
+          }))
+          return { name: c.name, gold: goldOf(m), tracks }
+        }),
+        purse: () => session.roster.members.reduce((n, m) => n + goldOf(m), 0),
+        train: async (who, track, pool) => {
+          const member = session.roster.members[who]
+          if (!member || !readyToTrain(member.character, mask).includes(track as Track)) return 'NOT READY TO TRAIN IN THAT.'
+          if (pool) poolOnto(session.roster.members, member)
+          if (!pay(member, TRAINING_COST)) return `${member.character.name} CANNOT PAY.`
+          const gained = train(member.character, track as Track, random)
+          session.ui.party(session.roster.members, session.roster.selected)
+          return `${member.character.name} IS NOW A LEVEL ${gained.level} ${track.toUpperCase()}, AND GAINS ${gained.hitPoints} HIT POINTS.`
+        },
+      })
+      return
+    }
     for (;;) {
       const candidates = this.roster.members
         .map((member) => ({ member, tracks: readyToTrain(member.character, mask) }))
@@ -381,6 +435,29 @@ export class GameSession {
   }
 
   private async campMenu(): Promise<void> {
+    if (this.ui.camp) {
+      const session = this
+      const stay = async (work: () => Promise<unknown>): Promise<'stay' | 'leave'> => { await work(); return 'stay' }
+      await this.ui.camp({
+        state: () => ({
+          hours: session.restHours(),
+          members: session.roster.members.map((m) => {
+            const c = m.character
+            const total = canCast(c) ? slots(c, 'cleric').reduce((n, k) => n + k, 0) + slots(c, 'magic-user').reduce((n, k) => n + k, 0) : 0
+            return { name: c.name, hp: c.hpCurrent, hpMax: c.hpMax, status: c.status, memorised: c.memorised.length, prepared: c.prepared.length, slots: total, gold: goldOf(m), caster: canCast(c) }
+          }),
+        }),
+        rest: async () => ((await session.rest()) ? 'leave' : 'stay'),
+        memorise: (who) => stay(async () => { if (session.ui.memorise && canCast(session.roster.members[who]?.character ?? { levels: [] } as unknown as Character)) await session.ui.memorise(who) }),
+        cast: () => stay(() => session.castOutside()),
+        use: () => stay(() => session.useOutside()),
+        pool: (who) => stay(async () => { const onto = session.roster.members[who]; if (onto) { poolOnto(session.roster.members, onto); session.ui.print(`${onto.character.name} HOLDS THE PARTY'S COINS.`, true); session.ui.party(session.roster.members, session.roster.selected) } }),
+        save: () => stay(async () => session.ui.saved()),
+        exportDos: () => stay(async () => { session.ui.files(await session.dosSave('B')); session.ui.print('SAVGAMB.DAT AND THE CHRDATB FILES ARE READY. PUT THEM IN THE GAME FOLDER AND LOAD GAME B.', true) }),
+        scribe: () => stay(() => session.scribeMenu()),
+      })
+      return
+    }
     {
       for (;;) {
         // The dead need a temple, not a night's sleep.

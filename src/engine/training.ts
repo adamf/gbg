@@ -42,7 +42,7 @@ export function tracksInMask(mask: number): Track[] {
 }
 
 /** A multi-class character splits experience between their classes. */
-function shareOfExperience(character: Character): number {
+export function shareOfExperience(character: Character): number {
   const classes = character.levels.filter((l) => l > 0).length
   return Math.floor(character.experience / Math.max(1, classes))
 }
