@@ -250,6 +250,26 @@
   .book .known div span { flex: 1; font-size: 13px; }
   .book .known button { padding: 2px 9px; background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
   .book .count { min-width: 18px; text-align: center; color: var(--accent); font-variant-numeric: tabular-nums; }
+  #turns { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 10px; background: #5c5c5c; border-bottom: 6px double #b03a2e; }
+  #turns span {
+    font: 700 12px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .03em; padding: 2px 8px; border-radius: 4px;
+    background: #3a3a3a; color: #d7d7a0; border: 2px solid transparent; white-space: nowrap;
+  }
+  #turns span.party { color: #ffd166; } #turns span.monster { color: #ff8a80; }
+  #turns span.now { border-color: #fff; background: #222; }
+  #turns span.done { opacity: .45; }
+  #shopBox { min-width: min(820px, 100%); }
+  .shopGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .shopGrid h4 { margin: 8px 0 6px; font-size: 13.5px; color: #c9b990; }
+  .buyers { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .buyers button { background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); padding: 5px 10px; font-size: 13px; }
+  .buyers button.picked { border-color: var(--accent); color: var(--accent); }
+  .wares { display: grid; gap: 4px; }
+  .wares button { text-align: left; background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); padding: 6px 10px; display: flex; justify-content: space-between; gap: 10px; }
+  .wares button b { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .wares button.readied { border-color: #8a7130; }
+  .shopWords { margin: 10px 0 0; font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--parchment); min-height: 1.5em; }
+  @media (max-width: 720px) { .shopGrid { grid-template-columns: 1fr; } }
   #tip {
     position: fixed; z-index: 20; pointer-events: none; display: none;
     background: #14100af0; border: 1px solid var(--parchment-edge); border-radius: 8px; padding: 6px 10px;
@@ -323,6 +343,7 @@
     <canvas id="sprite"></canvas>
     <canvas id="overhead"></canvas>
     <div id="battle">
+      <div id="turns"></div>
       <div id="battleRow">
         <canvas id="battleMap"></canvas>
         <pre id="battleInfo"></pre>
@@ -393,6 +414,18 @@
     <div class="box" id="bookBox">
       <div id="bookBody" class="book"></div>
       <div class="row"><button id="bookAuto">Automatic</button><button id="bookDone" class="primary">Done</button></div>
+    </div>
+  </div>
+  <div id="shop" class="overlay">
+    <div class="box" id="shopBox">
+      <h3 style="margin:0 0 6px">THE SHOP</h3>
+      <div class="buyers" id="buyers"></div>
+      <div class="shopGrid">
+        <div><h4>FOR SALE</h4><div class="wares" id="wares"></div></div>
+        <div><h4 id="packTitle">THE PACK — CLICK TO SELL</h4><div class="wares" id="sellables"></div></div>
+      </div>
+      <p class="shopWords" id="shopWords"></p>
+      <div class="row"><button id="shopAppraise">Appraise gems</button><button id="shopDone" class="primary">Leave</button></div>
     </div>
   </div>
   <div id="tip"></div>

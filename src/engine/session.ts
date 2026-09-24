@@ -39,6 +39,15 @@ import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writ
 import { SAVED_GAME_EXTRA, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH } from '../formats/library.js'
 import { goldOf, pay, poolOnto } from './treasure.js'
 
+/** A shop for a page that lays it out itself: the shelf, the party with their prices, and the deals. Every call answers with the words to show. */
+export interface ShopView {
+  wares(): Promise<{ label: string; price: number }[]>
+  members(): Promise<{ name: string; gold: number; items: { label: string; price: number; readied: boolean }[] }[]>
+  buy(ware: number, member: number): Promise<string>
+  sell(member: number, item: number): Promise<string>
+  appraise(member: number): Promise<string>
+}
+
 /** A character's sheet as data. */
 export interface SheetData {
   name: string
@@ -107,6 +116,8 @@ export interface SessionUi {
   equip?(index: number): Promise<void>
   /** A page with a memorisation panel chooses what a caster prepares; the session's spellChoices and setPrepared do the work. */
   memorise?(index: number): Promise<void>
+  /** A page with a shop panel trades through the view; it returns when the party leaves the shop. */
+  shop?(view: ShopView): Promise<void>
   /**
    * A page that can point at the grid answers this instead of a menu: for an area
    * spell, the fighters under the blast at the square chosen; otherwise up to `count`
@@ -1065,6 +1076,54 @@ export class GameSession {
     const names = await this.names()
     const shelf = [...this.pool.items]
     this.pool.items = []
+    if (this.ui.shop) {
+      const session = this
+      const appraise = (member: Member): string => {
+        const money = member.character.money
+        let gold = 0
+        for (; (money[5] ?? 0) > 0; money[5]!--) gold += 50 * (this.random(9) + 1)
+        for (; (money[6] ?? 0) > 0; money[6]!--) gold += 100 * (this.random(9) + 1)
+        money[3] = (money[3] ?? 0) + gold
+        return gold > 0 ? `THE SHOPKEEPER OFFERS ${gold} GOLD FOR THE LOT, AND ${member.character.name} TAKES IT.` : 'NOTHING TO APPRAISE.'
+      }
+      await this.ui.shop({
+        wares: async () => shelf.map((item) => ({ label: itemDisplayName(item, names), price: Math.max(1, item.value) })),
+        members: async () => {
+          const templates = await session.library.itemTemplates()
+          return session.roster.members.map((m) => ({
+            name: m.character.name,
+            gold: m.character.money[3] ?? 0,
+            items: m.items.map((item) => ({ label: itemDisplayName(item, names), price: Math.max(1, Math.floor(worth(item, templates) / 2)), readied: item.readied })),
+          }))
+        },
+        buy: async (ware, who) => {
+          const item = shelf[ware]
+          const member = session.roster.members[who]
+          if (!item || !member) return ''
+          const bought = buy(member, item)
+          if (bought) shelf.splice(ware, 1)
+          session.ui.party(session.roster.members, session.roster.selected)
+          return bought ? `${member.character.name} BUYS THE ${itemDisplayName(item, names).toUpperCase()}.` : `${member.character.name} CANNOT AFFORD IT.`
+        },
+        sell: async (who, at) => {
+          const member = session.roster.members[who]
+          if (!member || !member.items[at]) return ''
+          const templates = await session.library.itemTemplates()
+          if (member.items[at]?.readied) unready(member.character, member.items, at, await session.types())
+          const price = sell(member, at, templates)
+          session.ui.party(session.roster.members, session.roster.selected)
+          return `THE SHOPKEEPER PAYS ${price} GOLD.`
+        },
+        appraise: async (who) => {
+          const member = session.roster.members[who]
+          if (!member) return ''
+          const words = appraise(member)
+          session.ui.party(session.roster.members, session.roster.selected)
+          return words
+        },
+      })
+      return
+    }
     for (;;) {
       const choice = await this.ui.menu('THE SHOP.', ['BUY', 'SELL', 'APPRAISE', 'LEAVE'], 'horizontal')
       if (choice === 3) return

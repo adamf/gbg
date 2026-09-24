@@ -97,8 +97,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   outdoors and in a fight) and the camp, view, search, look, log and keys buttons.
   Everything is playable by mouse: menus are buttons, a fight is clicks on squares and
   foes with a tooltip over each fighter, spells are aimed on the field, the wilderness
-  is ridden by clicking the map, the sheet's pack is readied by clicking, and camp's
-  MEMORISE is a book with a count against every spell.
+  is ridden by clicking the map, the sheet's pack is readied by clicking, camp's
+  MEMORISE is a book with a count against every spell, a shop is a panel with the
+  buyer picked and every ware and pack item priced, and a strip above the field
+  shows the round's order of play.
 - **Headless play** — `src/headless/driver.ts` runs a session with no page: every
   prompt queues for the caller and the state is a plain object. `npm run headless --
   <folder>` is that as a JSON-lines conversation on stdin/stdout, and `npm run mcp --

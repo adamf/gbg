@@ -304,6 +304,11 @@ export class Battle {
     return lines
   }
 
+  /** This round's order of play, each with whether its turn has passed. */
+  get turnOrder(): { fighter: Fighter; done: boolean }[] {
+    return this.order.map((fighter, i) => ({ fighter, done: i < this.turn }))
+  }
+
   get current(): Fighter | undefined {
     while (this.turn < this.order.length && !able(this.order[this.turn]!.combatant.member.character)) this.turn++
     return this.order[this.turn]

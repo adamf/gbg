@@ -69,6 +69,8 @@ const sheetBody = el('sheetBody')
 const bookOverlay = el('book')
 const bookBody = el('bookBody')
 const tip = el('tip')
+const turns = el('turns')
+const shopOverlay = el('shop')
 const logOverlay = el('log')
 const logText = el('logText')
 const keysOverlay = el('keys')
@@ -76,7 +78,9 @@ const searchButton = el('searchButton')
 /** Whichever overlay is up, so the keys go to it. */
 let openOverlay: HTMLElement | undefined
 function showOverlay(which: HTMLElement): void { closeOverlays(); which.classList.add('shown'); openOverlay = which }
-function closeOverlays(): void { for (const o of [sheetOverlay, bookOverlay, logOverlay, keysOverlay]) o.classList.remove('shown'); openOverlay = undefined; bookClosed?.(); bookClosed = undefined }
+function closeOverlays(): void { for (const o of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay]) o.classList.remove('shown'); openOverlay = undefined; bookClosed?.(); bookClosed = undefined; shopClosed?.(); shopClosed = undefined }
+/** Resolves the shop panel's promise when it closes. */
+let shopClosed: (() => void) | undefined
 /** Resolves the memorisation panel's promise when it closes. */
 let bookClosed: (() => void) | undefined
 /** Everything the game has said, for the log. */
@@ -345,6 +349,7 @@ const pageUi: SessionUi = {
     battlePanel.classList.add('shown')
     battleActions.replaceChildren()
     drawBattle(battleCanvas, battle, battle.current, battleArt)
+    renderTurnStrip(battle)
     showFighter(battle.current)
     await playEffects(battleCanvas, battle, battle.current, battleArt)
     if (lines.length > 0) {
@@ -369,6 +374,7 @@ const pageUi: SessionUi = {
       }
       const refresh = (keepText = false): void => {
         drawBattle(battleCanvas, battle, fighter, battleArt)
+        renderTurnStrip(battle)
         showFighter(fighter)
         battleActions.replaceChildren()
         const button = (key: string, text: string, enabled: boolean, onClick: () => void): void => {
@@ -463,6 +469,47 @@ const pageUi: SessionUi = {
   },
 
   equip: (index) => openSheet(index),
+
+  shop(view) {
+    return new Promise<void>((resolve) => {
+      const words = el('shopWords')
+      let buyer = 0
+      const render = async (): Promise<void> => {
+        const [wares, members] = await Promise.all([view.wares(), view.members()])
+        if (buyer >= members.length) buyer = 0
+        el('buyers').replaceChildren(...members.map((m, i) => {
+          const b = document.createElement('button')
+          b.textContent = `${m.name} · ${m.gold} gold`
+          if (i === buyer) b.classList.add('picked')
+          b.addEventListener('click', () => { buyer = i; void render() })
+          return b
+        }))
+        el('wares').replaceChildren(...(wares.length === 0 ? [Object.assign(document.createElement('span'), { textContent: 'NOTHING FOR SALE.', className: 'spellLine' })] : wares.map((w, i) => {
+          const b = document.createElement('button')
+          const price = document.createElement('b'); price.textContent = `${w.price} gold`
+          b.append(w.label, price)
+          b.addEventListener('click', () => { void view.buy(i, buyer).then((said) => { words.textContent = said; void render() }) })
+          return b
+        })))
+        const me = members[buyer]
+        el('packTitle').textContent = me ? `${me.name.toUpperCase()}'S PACK — CLICK TO SELL` : 'THE PACK'
+        el('sellables').replaceChildren(...(!me || me.items.length === 0 ? [Object.assign(document.createElement('span'), { textContent: 'NOTHING TO SELL.', className: 'spellLine' })] : me.items.map((item, i) => {
+          const b = document.createElement('button')
+          if (item.readied) b.classList.add('readied')
+          const price = document.createElement('b'); price.textContent = `${item.price} gold`
+          b.append(`${item.readied ? '● ' : ''}${item.label}`, price)
+          b.title = item.readied ? 'Readied; selling puts it down first' : 'Sell'
+          b.addEventListener('click', () => { void view.sell(buyer, i).then((said) => { words.textContent = said; void render() }) })
+          return b
+        })))
+      }
+      el('shopAppraise').onclick = () => { void view.appraise(buyer).then((said) => { words.textContent = said; void render() }) }
+      el('shopDone').onclick = closeOverlays
+      words.textContent = ''
+      shopClosed = resolve
+      void render().then(() => showOverlay(shopOverlay))
+    })
+  },
   memorise: (index) => openBook(index),
 
   battleEnd() {
@@ -797,6 +844,20 @@ function leaveLevel(): void {
   startScreen.style.display = 'grid'
 }
 
+/** The round's order of play above the field: who has gone, who is up, who waits. */
+function renderTurnStrip(battle: Battle): void {
+  const current = battle.current
+  turns.replaceChildren(...battle.turnOrder.map(({ fighter, done }) => {
+    const chip = document.createElement('span')
+    const c = fighter.combatant.member.character
+    chip.className = `${fighter.side}${fighter === current ? ' now' : done ? ' done' : ''}`
+    if (c.status !== 'okay' && c.status !== 'asleep' && c.status !== 'held') chip.style.textDecoration = 'line-through'
+    chip.textContent = fighter.combatant.label
+    chip.title = `HP ${c.hpCurrent}/${c.hpMax}`
+    return chip
+  }))
+}
+
 /** A character's sheet in an overlay: the numbers, and the pack, where a click readies or puts down. */
 async function openSheet(index: number): Promise<void> {
   const current = session
@@ -913,7 +974,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#actions butt
   button.addEventListener('click', () => doAction(button.dataset.act!))
 }
 for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
-for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
 // Over a fighter on the field, a word or two about them.
 battleCanvas.addEventListener('mousemove', (event) => {
   const battle = openTurn?.battle ?? (window as unknown as { gbg?: { battle?: Battle } }).gbg?.battle
