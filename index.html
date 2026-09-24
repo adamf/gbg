@@ -114,13 +114,13 @@
   }
   #overhead.shown { display: block; }
   #battle {
-    position: absolute; top: 10px; left: 10px; max-width: calc(100% - 20px); max-height: calc(100% - 20px);
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 20px); max-height: calc(100% - 20px);
     background: #5c5c5c; border: 6px double #b03a2e; border-radius: 4px;
     padding: 0; display: none; box-shadow: 0 12px 40px #000c; z-index: 2; overflow: auto;
   }
   #battle.shown { display: block; }
   #battleRow { display: flex; }
-  #battleMap { display: block; image-rendering: pixelated; max-height: 60vh; width: auto; cursor: crosshair; }
+  #battleMap { display: block; image-rendering: pixelated; max-height: calc(100vh - 300px); width: auto; cursor: crosshair; }
   #battleInfo {
     margin: 0; padding: 14px 18px; min-width: 200px; border-left: 6px double #b03a2e;
     font: 600 16px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #8ee08e; white-space: pre; background: #5c5c5c;
@@ -199,7 +199,9 @@
   #menu button { background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
   #menu button:hover { border-color: var(--accent); }
   #menu button kbd { color: #b99a48; background: none; padding: 0; margin-right: 6px; }
-  #menu.vertical { flex-direction: column; align-items: flex-start; }
+  #menu.vertical { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  #menu.vertical button { text-align: left; }
+  #text { max-height: 42vh; overflow-y: auto; }
   #menu input { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--parchment-edge); background: #1a140a; color: var(--parchment); }
   #controls { display: flex; gap: 10px; align-items: end; }
   .pad { display: grid; grid-template-columns: repeat(3, 44px); grid-auto-rows: 44px; gap: 4px; }
@@ -207,8 +209,8 @@
   .pad button:active { background: var(--accent); color: var(--accent-ink); }
   .pad .blank { visibility: hidden; }
   #pad8 { display: none; }
-  #play.outdoors #pad8 { display: grid; }
-  #play.outdoors #pad4 { display: none; }
+  #play.outdoors #pad8, #play.turn #pad8 { display: grid; }
+  #play.outdoors #pad4, #play.turn #pad4 { display: none; }
   #play.outdoors #map { display: none; }
   #actions { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; }
   #actions button { padding: 8px 12px; font-size: 13px; text-align: left; }

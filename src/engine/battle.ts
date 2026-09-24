@@ -9,6 +9,7 @@
  */
 
 import type { Spell } from '../formats/spells.js'
+import { blastSquares, distance, spellRange, type Square } from './areas.js'
 import type { Character } from '../formats/character.js'
 import type { Direction, GeoMap } from '../formats/geo.js'
 import { buildArena, buildWildArena, type Arena } from './arena.js'
@@ -588,7 +589,8 @@ export class Battle {
       const level = Math.max(casterLevel(me, 'cleric'), casterLevel(me, 'magic-user'), 1)
       const worth = (sp: Spell): number => {
         const e = sp.effect
-        const n = sp.target === 'foes' ? Math.min(e.count ?? 99, foesUp.length) : 1
+        const n = sp.area ? (this.bestBlast(sp, f)?.targets.filter((t) => t.side !== f.side).length ?? 0) : sp.target === 'foes' ? Math.min(e.count ?? 99, foesUp.filter((o) => this.reaches(sp, f, o)).length) : 1
+        if (n === 0) return 0
         const avg = (dice: number, sides: number) => (dice * (sides + 1)) / 2
         if (e.kind === 'damage' || e.kind === 'harm') return (avg(e.dice ?? 0, e.sides ?? 1) + (e.bonus ?? 0) + avg((e.perLevel ?? 0) * level, e.sides ?? 1)) * n * (sp.target === 'foes' ? 0.75 : 1)
         if (e.kind === 'hold') return 6 * n
@@ -598,8 +600,8 @@ export class Battle {
       const best = Math.max(...spells.map(worth))
       const top = spells.filter((sp) => worth(sp) >= best - 0.01)
       const spell = top[this.random(top.length - 1)]!
-      const foes = this.fighters.filter((o) => o.side !== f.side && able(o.combatant.member.character))
-      const chosen = spell.target === 'foe' ? [target()].filter((t): t is Fighter => t !== undefined) : foes.slice(0, spell.effect.count ?? 99)
+      const foes = this.fighters.filter((o) => o.side !== f.side && able(o.combatant.member.character) && this.reaches(spell, f, o))
+      const chosen = spell.area ? (this.bestBlast(spell, f)?.targets ?? []) : spell.target === 'foe' ? [target()].filter((t): t is Fighter => t !== undefined && this.reaches(spell, f, t)) : foes.slice(0, spell.effect.count ?? 99)
       if (chosen.length > 0) {
         forget(me, spell.id)
         this.recordSpell(spell, f, chosen)
@@ -655,6 +657,55 @@ export class Battle {
   /** The fighter standing for a character, if they are in this fight. */
   fighterOf(character: Character): Fighter | undefined {
     return this.fighters.find((f) => f.combatant.member.character === character)
+  }
+
+  /** Whoever stands on any of the squares and can still be affected: up, asleep or held. */
+  fightersIn(squares: readonly Square[]): Fighter[] {
+    return this.fighters.filter((f) => {
+      const c = f.combatant.member.character
+      return (c.status === 'okay' || c.status === 'asleep' || c.status === 'held') && squares.some((s) => s.x === f.x && s.y === f.y)
+    })
+  }
+
+  /** The squares a spell aimed at `at` covers, from where the caster stands. */
+  blast(spell: Spell, caster: Fighter, at: Square): Square[] {
+    return spell.area ? blastSquares(spell.area, caster, at, this.width, this.height) : [at]
+  }
+
+  /** How far the caster's spell reaches, in squares; nothing for no limit. */
+  reach(spell: Spell, caster: Fighter): number | undefined {
+    const c = caster.combatant.member.character
+    return spellRange(spell, Math.max(1, casterLevel(c, spell.class)))
+  }
+
+  /** True when a spell from the caster reaches the square. */
+  reaches(spell: Spell, caster: Fighter, at: Square): boolean {
+    const range = this.reach(spell, caster)
+    return range === undefined || distance(caster, at) <= range
+  }
+
+  /**
+   * Where the computer would aim an area spell: the square in range that catches
+   * the most foes and the fewest friends, or nothing when no square is worth it.
+   */
+  bestBlast(spell: Spell, caster: Fighter): { at: Square; targets: Fighter[]; score: number } | undefined {
+    let best: { at: Square; targets: Fighter[]; score: number } | undefined
+    const candidates = new Set<string>()
+    for (const foe of this.fighters) {
+      if (foe.side === caster.side) continue
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) candidates.add(`${foe.x + dx},${foe.y + dy}`)
+    }
+    for (const key of candidates) {
+      const [x, y] = key.split(',').map(Number) as [number, number]
+      const at = { x, y }
+      if (!this.reaches(spell, caster, at)) continue
+      const targets = this.fightersIn(this.blast(spell, caster, at))
+      const foes = targets.filter((t) => t.side !== caster.side).length
+      const friends = targets.length - foes
+      const score = foes - 2 * friends
+      if (foes > 0 && (!best || score > best.score)) best = { at, targets, score }
+    }
+    return best
   }
 
   /** Notes a spell for the screen: its shape and colour by what it does. */

@@ -87,6 +87,11 @@ export interface SpellEffect {
   only?: string
 }
 
+/** How far a spell reaches on the combat grid, in squares: a number, so many plus so many a level, or touch. */
+export type SpellRange = number | { base: number; perLevel: number } | 'touch'
+/** The squares a spell covers: a disc of so many squares' radius about the target, a block so many across, or a line so long from the caster. */
+export type SpellArea = { kind: 'circle'; radius: number } | { kind: 'block'; size: number } | { kind: 'line'; length: number }
+
 export interface Spell {
   id: number
   name: string
@@ -96,6 +101,10 @@ export interface Spell {
   effect: SpellEffect
   /** True for the spells that also work outside combat. */
   anytime?: boolean
+  /** The manual's range; nothing means anywhere on the field. */
+  range?: SpellRange
+  /** For the spells that fill squares rather than pick foes: everyone inside is affected, friend or foe. */
+  area?: SpellArea
 }
 
 /**
@@ -104,43 +113,43 @@ export interface Spell {
  */
 export const SPELLS: readonly Spell[] = [
   // ---- first level, cleric
-  { id: 1, name: 'Bless', class: 'cleric', level: 1, target: 'party', effect: { kind: 'bless', bonus: 1, rounds: 6 } },
-  { id: 2, name: 'Curse', class: 'cleric', level: 1, target: 'foes', effect: { kind: 'curse', bonus: 1, rounds: 6 } },
-  { id: 3, name: 'Cure Light Wounds', class: 'cleric', level: 1, target: 'ally', effect: { kind: 'heal', dice: 1, sides: 8 }, anytime: true },
-  { id: 4, name: 'Cause Light Wounds', class: 'cleric', level: 1, target: 'foe', effect: { kind: 'harm', dice: 1, sides: 8 } },
+  { id: 1, name: 'Bless', class: 'cleric', level: 1, target: 'party', effect: { kind: 'bless', bonus: 1, rounds: 6 }, range: 6 },
+  { id: 2, name: 'Curse', class: 'cleric', level: 1, target: 'foes', effect: { kind: 'curse', bonus: 1, rounds: 6 }, range: 6 },
+  { id: 3, name: 'Cure Light Wounds', class: 'cleric', level: 1, target: 'ally', effect: { kind: 'heal', dice: 1, sides: 8 }, anytime: true, range: 'touch' },
+  { id: 4, name: 'Cause Light Wounds', class: 'cleric', level: 1, target: 'foe', effect: { kind: 'harm', dice: 1, sides: 8 }, range: 'touch' },
   { id: 5, name: 'Detect Magic', class: 'cleric', level: 1, target: 'self', effect: { kind: 'utility', text: 'THE MAGIC ABOUT YOU GLOWS FAINTLY.' }, anytime: true },
   { id: 6, name: 'Protection From Evil', class: 'cleric', level: 1, target: 'ally', effect: { kind: 'shield', bonus: 2, roundsPerLevel: 3 }, anytime: true },
   { id: 7, name: 'Protection From Good', class: 'cleric', level: 1, target: 'ally', effect: { kind: 'shield', bonus: 2, roundsPerLevel: 3 }, anytime: true },
   { id: 8, name: 'Resist Cold', class: 'cleric', level: 1, target: 'ally', effect: { kind: 'buff', affect: 'resistCold', amount: 1, roundsPerLevel: 10 }, anytime: true },
   // ---- first level, magic-user
-  { id: 9, name: 'Burning Hands', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'damage', dice: 0, sides: 1, bonus: 0, perLevel: 1 } },
-  { id: 10, name: 'Charm Person', class: 'magic-user', level: 1, target: 'foes', effect: { kind: 'hold', count: 1, rounds: 99 } },
+  { id: 9, name: 'Burning Hands', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'damage', dice: 0, sides: 1, bonus: 0, perLevel: 1 }, range: 'touch' },
+  { id: 10, name: 'Charm Person', class: 'magic-user', level: 1, target: 'foes', effect: { kind: 'hold', count: 1, rounds: 99 }, range: 12 },
   { id: 11, name: 'Detect Magic', class: 'magic-user', level: 1, target: 'self', effect: { kind: 'utility', text: 'THE MAGIC ABOUT YOU GLOWS FAINTLY.' }, anytime: true },
   { id: 12, name: 'Enlarge', class: 'magic-user', level: 1, target: 'ally', effect: { kind: 'buff', affect: 'damage', amount: 2, roundsPerLevel: 10 } },
   { id: 13, name: 'Reduce', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'weaken', affect: 'damage', amount: 2, roundsPerLevel: 10, save: true } },
   { id: 14, name: 'Friends', class: 'magic-user', level: 1, target: 'self', effect: { kind: 'utility', text: 'YOU SEEM A LITTLE MORE LIKEABLE.' }, anytime: true },
-  { id: 15, name: 'Magic Missile', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 4, bonus: 1 } },
+  { id: 15, name: 'Magic Missile', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 4, bonus: 1 }, range: { base: 6, perLevel: 1 } },
   { id: 16, name: 'Protection From Evil', class: 'magic-user', level: 1, target: 'ally', effect: { kind: 'shield', bonus: 2, roundsPerLevel: 2 }, anytime: true },
   { id: 17, name: 'Protection From Good', class: 'magic-user', level: 1, target: 'ally', effect: { kind: 'shield', bonus: 2, roundsPerLevel: 2 }, anytime: true },
   { id: 18, name: 'Read Magic', class: 'magic-user', level: 1, target: 'self', effect: { kind: 'utility', text: 'THE WRITING MAKES SENSE FOR A WHILE.' }, anytime: true },
   { id: 19, name: 'Shield', class: 'magic-user', level: 1, target: 'self', effect: { kind: 'shield', bonus: 4, roundsPerLevel: 5 } },
-  { id: 20, name: 'Shocking Grasp', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 8, bonus: 0, perLevel: 0 } },
-  { id: 21, name: 'Sleep', class: 'magic-user', level: 1, target: 'foes', effect: { kind: 'sleep', dice: 2, sides: 4, maxHitDice: 4, roundsPerLevel: 5 } },
+  { id: 20, name: 'Shocking Grasp', class: 'magic-user', level: 1, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 8, bonus: 0, perLevel: 0 }, range: 'touch' },
+  { id: 21, name: 'Sleep', class: 'magic-user', level: 1, target: 'foes', effect: { kind: 'sleep', dice: 2, sides: 4, maxHitDice: 4, roundsPerLevel: 5 }, range: { base: 3, perLevel: 1 }, area: { kind: 'block', size: 3 } },
   // ---- second level, cleric
   { id: 22, name: 'Find Traps', class: 'cleric', level: 2, target: 'self', effect: { kind: 'utility', text: 'YOU SEE NO TRAPS NEARBY.' }, anytime: true },
-  { id: 23, name: 'Hold Person', class: 'cleric', level: 2, target: 'foes', effect: { kind: 'hold', count: 3, rounds: 4, roundsPerLevel: 1 } },
+  { id: 23, name: 'Hold Person', class: 'cleric', level: 2, target: 'foes', effect: { kind: 'hold', count: 3, rounds: 4, roundsPerLevel: 1 }, range: 6 },
   { id: 24, name: 'Resist Fire', class: 'cleric', level: 2, target: 'ally', effect: { kind: 'buff', affect: 'resistFire', amount: 1, roundsPerLevel: 10 }, anytime: true },
-  { id: 25, name: "Silence, 15' Radius", class: 'cleric', level: 2, target: 'foes', effect: { kind: 'weaken', affect: 'silence', amount: 1, count: 3, roundsPerLevel: 2, save: true } },
+  { id: 25, name: "Silence, 15' Radius", class: 'cleric', level: 2, target: 'foes', effect: { kind: 'weaken', affect: 'silence', amount: 1, count: 3, roundsPerLevel: 2, save: true }, range: 12, area: { kind: 'block', size: 3 } },
   { id: 26, name: 'Slow Poison', class: 'cleric', level: 2, target: 'ally', effect: { kind: 'cure', cures: ['poison'] }, anytime: true },
-  { id: 27, name: 'Snake Charm', class: 'cleric', level: 2, target: 'foes', effect: { kind: 'hold', count: 4, rounds: 5, only: 'SNAKE' } },
-  { id: 28, name: 'Spiritual Hammer', class: 'cleric', level: 2, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 6, bonus: 1 } },
+  { id: 27, name: 'Snake Charm', class: 'cleric', level: 2, target: 'foes', effect: { kind: 'hold', count: 4, rounds: 5, only: 'SNAKE' }, range: 3 },
+  { id: 28, name: 'Spiritual Hammer', class: 'cleric', level: 2, target: 'foe', effect: { kind: 'damage', dice: 1, sides: 6, bonus: 1 }, range: 3 },
   // ---- second level, magic-user
   { id: 29, name: 'Detect Invisibility', class: 'magic-user', level: 2, target: 'self', effect: { kind: 'utility', text: 'NOTHING UNSEEN IS NEAR.' } },
   { id: 30, name: 'Invisibility', class: 'magic-user', level: 2, target: 'self', effect: { kind: 'buff', affect: 'ac', amount: 4, rounds: 99 } },
   { id: 31, name: 'Knock', class: 'magic-user', level: 2, target: 'self', effect: { kind: 'utility', text: 'ANY LOCK NEARBY GIVES.' }, anytime: true },
   { id: 32, name: 'Mirror Image', class: 'magic-user', level: 2, target: 'self', effect: { kind: 'buff', affect: 'ac', amount: 2, roundsPerLevel: 2 } },
   { id: 33, name: 'Ray of Enfeeblement', class: 'magic-user', level: 2, target: 'foe', effect: { kind: 'weaken', affect: 'damage', amount: 3, roundsPerLevel: 1, save: true } },
-  { id: 34, name: 'Stinking Cloud', class: 'magic-user', level: 2, target: 'foes', effect: { kind: 'hold', count: 4, dice: 1, sides: 4, rounds: 1 } },
+  { id: 34, name: 'Stinking Cloud', class: 'magic-user', level: 2, target: 'foes', effect: { kind: 'hold', count: 4, dice: 1, sides: 4, rounds: 1 }, range: 3, area: { kind: 'block', size: 3 } },
   { id: 35, name: 'Strength', class: 'magic-user', level: 2, target: 'ally', effect: { kind: 'buff', affect: 'damage', amount: 2, rounds: 99 }, anytime: true },
   // ---- third level, cleric
   { id: 36, name: 'Animate Dead', class: 'cleric', level: 3, target: 'self', effect: { kind: 'none' } },
@@ -155,15 +164,15 @@ export const SPELLS: readonly Spell[] = [
   // ---- third level, magic-user
   { id: 45, name: 'Blink', class: 'magic-user', level: 3, target: 'self', effect: { kind: 'buff', affect: 'ac', amount: 2, roundsPerLevel: 1 } },
   { id: 46, name: 'Dispel Magic', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'dispel' }, anytime: true },
-  { id: 47, name: 'Fireball', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 6 } },
+  { id: 47, name: 'Fireball', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 6 }, range: { base: 10, perLevel: 1 }, area: { kind: 'circle', radius: 2 } },
   { id: 48, name: 'Haste', class: 'magic-user', level: 3, target: 'party', effect: { kind: 'buff', affect: 'haste', amount: 1, rounds: 3, roundsPerLevel: 1 } },
-  { id: 49, name: 'Hold Person', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'hold', count: 4, rounds: 2, roundsPerLevel: 1 } },
+  { id: 49, name: 'Hold Person', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'hold', count: 4, rounds: 2, roundsPerLevel: 1 }, range: 12 },
   { id: 50, name: "Invisibility, 10' Radius", class: 'magic-user', level: 3, target: 'party', effect: { kind: 'buff', affect: 'ac', amount: 2, rounds: 99 } },
-  { id: 51, name: 'Lightning Bolt', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 3 } },
+  { id: 51, name: 'Lightning Bolt', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'damage', dice: 0, sides: 6, perLevel: 1, count: 3 }, range: { base: 4, perLevel: 1 }, area: { kind: 'line', length: 8 } },
   { id: 52, name: "Protection From Evil, 10' Radius", class: 'cleric', level: 3, target: 'party', effect: { kind: 'shield', bonus: 2, roundsPerLevel: 1 } },
   { id: 53, name: "Protection From Good, 10' Radius", class: 'cleric', level: 3, target: 'party', effect: { kind: 'shield', bonus: 2, roundsPerLevel: 1 } },
   { id: 54, name: 'Protection From Normal Missiles', class: 'magic-user', level: 3, target: 'ally', effect: { kind: 'buff', affect: 'missileProof', amount: 1, roundsPerLevel: 10 } },
-  { id: 55, name: 'Slow', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'weaken', affect: 'slow', amount: 1, count: 4, rounds: 3, roundsPerLevel: 1, save: true } },
+  { id: 55, name: 'Slow', class: 'magic-user', level: 3, target: 'foes', effect: { kind: 'weaken', affect: 'slow', amount: 1, count: 4, rounds: 3, roundsPerLevel: 1, save: true }, range: { base: 9, perLevel: 1 } },
   { id: 56, name: 'Restoration', class: 'cleric', level: 3, target: 'ally', effect: { kind: 'cure', cures: ['drain'] }, anytime: true },
 ]
 

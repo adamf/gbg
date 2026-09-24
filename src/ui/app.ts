@@ -13,7 +13,7 @@ import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-v
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
 import { BATTLE_STEPS, type Battle, type Fighter } from '../engine/battle.js'
-import { drawBattle, playEffects, SQUARE, viewport, type BattleArt } from './battle-view.js'
+import { type Overlay, drawBattle, playEffects, SQUARE, viewport, type BattleArt } from './battle-view.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { mapName } from '../formats/detect.js'
@@ -58,6 +58,8 @@ const battleActions = el('battleActions')
 /** The player's turn in a battle, so keys can move the fighter. */
 let openTurn: { battle: Battle; fighter: Fighter; refresh(): void; finish(how: 'done' | 'run'): void } | undefined
 let battleArt: BattleArt | undefined
+/** True while a spell is being aimed on the field, so the turn's own clicks wait. */
+let aiming = false
 /** The original's own abbreviations for the party panel. */
 const STATUS_SHORT: Record<string, string> = { unconscious: 'UNCON', dying: 'DYING', dead: 'DEAD', asleep: 'SLEEP', held: 'HELD', stoned: 'STONE', running: 'FLED', animated: 'ANIM', gone: 'GONE', 'temporarily gone': 'GONE' }
 const battleInfo = el('battleInfo')
@@ -355,11 +357,12 @@ const pageUi: SessionUi = {
         if (finished) return
         finished = true
         openTurn = undefined
+        playScreen.classList.remove('turn')
         battleActions.replaceChildren()
         clearMenu()
         resolve(how)
       }
-      const refresh = (): void => {
+      const refresh = (keepText = false): void => {
         drawBattle(battleCanvas, battle, fighter, battleArt)
         showFighter(fighter)
         battleActions.replaceChildren()
@@ -380,21 +383,21 @@ const pageUi: SessionUi = {
           void cast().then(async (lines) => {
             await playEffects(battleCanvas, battle, fighter, battleArt)
             if (lines.length > 0) pageUi.print(lines.join('\n'), true)
-            refresh()
+            refresh(lines.length > 0)
           })
         })
         button('U', 'USE', !fighter.acted, () => {
           void use().then((lines) => {
             if (lines.length > 0) pageUi.print(lines.join('\n'), true)
             if (battle.over) finish('done')
-            else refresh()
+            else refresh(lines.length > 0)
           })
         })
         button('T', 'TURN', !fighter.acted && (fighter.combatant.member.character.levels[0] ?? 0) > 0 && battle.undead().length > 0, () => {
           const lines = battle.turnUndead(fighter)
           pageUi.print(lines.join('\n'), true)
           if (battle.over) finish('done')
-          else refresh()
+          else refresh(true)
         })
         const bleeding = battle.dyingNeighbours(fighter)
         button('B', 'BANDAGE', bleeding.length > 0 && !fighter.acted, () => {
@@ -403,12 +406,12 @@ const pageUi: SessionUi = {
             const target = bleeding[at]
             if (!target) return
             pageUi.print(battle.bandage(fighter, target).join('\n'), true)
-            refresh()
+            refresh(true)
           })()
         })
         button('E', 'END TURN', true, () => (openTurn?.finish ?? finish)('done'))
         button('R', 'RUN', true, () => (openTurn?.finish ?? finish)('run'))
-        pageUi.print(`${label}'S TURN. ${fighter.moves} MOVE${fighter.moves === 1 ? '' : 'S'} LEFT. CLICK A SQUARE OR USE THE ARROWS AND Q E Z X TO MOVE, F ATTACK, C CAST, E END.`, true)
+        if (!keepText) pageUi.print(`${label}'S TURN. ${fighter.moves} MOVE${fighter.moves === 1 ? '' : 'S'} LEFT. CLICK A SQUARE OR A FOE, OR USE THE PAD. F ATTACK, C CAST, E END.`, true)
       }
       const pick = async (prompt: string, targets: Fighter[]): Promise<void> => {
         const at = targets.length === 1 ? 0 : await pageUi.menu(prompt, targets.map((t) => t.combatant.label), 'vertical')
@@ -420,10 +423,10 @@ const pageUi: SessionUi = {
         drawBattle(battleCanvas, battle, fighter, battleArt)
         pageUi.party([], 0)
         if (battle.over) finish('done')
-        else refresh()
+        else refresh(true)
       }
       const onClick = (event: MouseEvent): void => {
-        if (finished || openMenu) return
+        if (finished || openMenu || aiming) return
         const rect = battleCanvas.getBoundingClientRect()
         const scaleX = battleCanvas.width / rect.width
         const scaleY = battleCanvas.height / rect.height
@@ -449,6 +452,7 @@ const pageUi: SessionUi = {
         finishWas(how)
       }
       openTurn = { battle, fighter, refresh, finish: finishAndDetach }
+      playScreen.classList.add('turn')
       refresh()
     })
   },
@@ -457,6 +461,104 @@ const pageUi: SessionUi = {
     openTurn = undefined
     battleArt = undefined
     battlePanel.classList.remove('shown')
+  },
+
+  /**
+   * Aiming with the mouse: the blast follows the pointer over the field, squares out
+   * of range are dimmed, and a click lands it; for a spell that picks fighters, each
+   * click picks one. Escape, a right click or CANCEL gives the spell up.
+   */
+  aim(battle, caster, spell, choice) {
+    return new Promise<Fighter[] | undefined>((resolve) => {
+      const range = battle.reach(spell, caster)
+      const picked: Fighter[] = []
+      let hover: { x: number; y: number } | undefined
+      const name = spell.name.toUpperCase()
+      const squareAt = (event: MouseEvent): { x: number; y: number } => {
+        const rect = battleCanvas.getBoundingClientRect()
+        const view = viewport(battle, caster)
+        return {
+          x: view.x + Math.floor(((event.clientX - rect.left) * battleCanvas.width) / rect.width / SQUARE),
+          y: view.y + Math.floor(((event.clientY - rect.top) * battleCanvas.height) / rect.height / SQUARE),
+        }
+      }
+      const draw = (): void => {
+        const overlays: Overlay[] = []
+        if (range !== undefined && range < 12) {
+          const reachable: { x: number; y: number }[] = []
+          for (let y = Math.max(0, caster.y - range); y <= Math.min(battle.height - 1, caster.y + range); y++) {
+            for (let x = Math.max(0, caster.x - range); x <= Math.min(battle.width - 1, caster.x + range); x++) reachable.push({ x, y })
+          }
+          overlays.push({ squares: reachable, fill: 'rgba(201, 162, 39, 0.10)' })
+        }
+        if (choice.kind === 'area' && hover) {
+          const ok = battle.reaches(spell, caster, hover)
+          overlays.push({ squares: battle.blast(spell, caster, hover), fill: ok ? 'rgba(255, 120, 30, 0.45)' : 'rgba(120, 120, 120, 0.4)', edge: ok ? '#ffb347' : '#777' })
+        }
+        if (choice.kind === 'fighters') {
+          overlays.push({ squares: choice.among.map((f) => ({ x: f.x, y: f.y })), fill: 'rgba(255, 255, 255, 0.12)', edge: '#ffffff88' })
+          if (hover) {
+            const under = battle.at(hover.x, hover.y)
+            if (under && choice.among.includes(under)) overlays.push({ squares: [hover], fill: 'rgba(255, 120, 30, 0.35)', edge: '#ffb347' })
+          }
+          overlays.push({ squares: picked.map((f) => ({ x: f.x, y: f.y })), fill: 'rgba(255, 80, 30, 0.45)', edge: '#ff5533' })
+        }
+        drawBattle(battleCanvas, battle, caster, battleArt, overlays)
+      }
+      const finish = (result: Fighter[] | undefined): void => {
+        battleCanvas.removeEventListener('mousemove', onMove)
+        battleCanvas.removeEventListener('click', onClick)
+        battleCanvas.removeEventListener('contextmenu', onCancel)
+        window.removeEventListener('keydown', onKey, true)
+        battleCanvas.style.cursor = 'crosshair'
+        aiming = false
+        drawBattle(battleCanvas, battle, caster, battleArt)
+        resolve(result)
+      }
+      const onMove = (event: MouseEvent): void => { hover = squareAt(event); draw() }
+      const onClick = (event: MouseEvent): void => {
+        const at = squareAt(event)
+        if (choice.kind === 'area') {
+          if (!battle.reaches(spell, caster, at)) { pageUi.print(`OUT OF RANGE: ${name} REACHES ${range} SQUARES.`, true); return }
+          finish(battle.fightersIn(battle.blast(spell, caster, at)))
+          return
+        }
+        const under = battle.at(at.x, at.y)
+        if (!under || !choice.among.includes(under)) return
+        if (picked.includes(under)) picked.splice(picked.indexOf(under), 1)
+        else picked.push(under)
+        if (picked.length >= choice.count) { finish(picked); return }
+        pageUi.print(`${name}: ${picked.length} OF ${choice.count} PICKED. CLICK MORE, OR DONE.`, true)
+        draw()
+      }
+      const onCancel = (event: Event): void => { event.preventDefault(); finish(undefined) }
+      const onKey = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') { event.preventDefault(); finish(undefined) }
+        if (event.key === 'Enter' && choice.kind === 'fighters' && picked.length > 0) { event.preventDefault(); finish(picked) }
+      }
+      aiming = true
+      battleCanvas.style.cursor = 'cell'
+      battleCanvas.addEventListener('mousemove', onMove)
+      battleCanvas.addEventListener('click', onClick)
+      battleCanvas.addEventListener('contextmenu', onCancel)
+      window.addEventListener('keydown', onKey, true)
+      battleActions.replaceChildren()
+      const cancel = document.createElement('button')
+      cancel.append('CANCEL')
+      cancel.addEventListener('click', () => finish(undefined))
+      battleActions.append(cancel)
+      if (choice.kind === 'fighters' && choice.count > 1) {
+        const done = document.createElement('button')
+        done.append('DONE')
+        done.addEventListener('click', () => finish(picked.length > 0 ? picked : undefined))
+        battleActions.append(done)
+      }
+      const reach = range === undefined ? '' : ` (${range} SQUARES)`
+      pageUi.print(choice.kind === 'area'
+        ? `AIM ${name}${reach}: POINT AT A SQUARE AND CLICK. EVERYONE UNDER THE BLAST IS HIT.`
+        : `${name}${reach}: CLICK ${choice.count > 1 ? `UP TO ${choice.count} TARGETS` : 'A TARGET'} ON THE FIELD.`, true)
+      draw()
+    })
   },
 
   party(members: readonly Member[], selected: number) {
@@ -722,8 +824,14 @@ function doAction(action: string): void {
 for (const button of document.querySelectorAll<HTMLButtonElement>('#pad4 button[data-cmd]')) {
   button.addEventListener('click', () => doMove(button.dataset.cmd as MoveCommand))
 }
+/** The eight-way pad's directions as battle steps: 0 north, clockwise. */
+const PAD_STEPS = [{ dx: 0, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 0 }, { dx: 1, dy: 1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 1 }, { dx: -1, dy: 0 }, { dx: -1, dy: -1 }]
 for (const button of document.querySelectorAll<HTMLButtonElement>('#pad8 button[data-dir]')) {
-  button.addEventListener('click', () => { if (session && !session.busy && !openMenu && session.overhead) void session.moveOverland(Number(button.dataset.dir)) })
+  button.addEventListener('click', () => {
+    const dir = Number(button.dataset.dir)
+    if (openTurn && !openMenu) { if (!aiming && openTurn.battle.move(openTurn.fighter, PAD_STEPS[dir]!)) openTurn.refresh(); return }
+    if (session && !session.busy && !openMenu && session.overhead) void session.moveOverland(dir)
+  })
 }
 for (const button of document.querySelectorAll<HTMLButtonElement>('#actions button[data-act]')) {
   button.addEventListener('click', () => doAction(button.dataset.act!))
@@ -754,7 +862,7 @@ window.addEventListener('keydown', (event) => {
   // An overlay swallows the keys but Escape and Enter.
   if (openOverlay) { if (event.key === 'Escape' || event.key === 'Enter') { event.preventDefault(); closeOverlays() } return }
 
-  if (openTurn && !openMenu) {
+  if (openTurn && !openMenu && !aiming) {
     const { battle, fighter, refresh } = openTurn
     const steps: Record<string, { dx: number; dy: number }> = {
       ArrowUp: BATTLE_STEPS.north, ArrowDown: BATTLE_STEPS.south, ArrowLeft: BATTLE_STEPS.west, ArrowRight: BATTLE_STEPS.east,

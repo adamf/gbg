@@ -48,7 +48,10 @@ export function viewport(battle: Battle, focus: { x: number; y: number } | undef
   }
 }
 
-export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fighter | undefined, art?: BattleArt): void {
+/** Squares to tint over the field: the blast being aimed, the fighters picked. */
+export interface Overlay { squares: readonly { x: number; y: number }[]; fill: string; edge?: string }
+
+export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fighter | undefined, art?: BattleArt, overlays: readonly Overlay[] = []): void {
   canvas.width = VIEW_COLS * SQUARE
   canvas.height = VIEW_ROWS * SQUARE
   const g = canvas.getContext('2d')
@@ -113,6 +116,21 @@ export function drawBattle(canvas: HTMLCanvasElement, battle: Battle, active: Fi
     g.textAlign = 'center'
     g.textBaseline = 'middle'
     g.fillText(c.name.charAt(0) + (f.combatant.label.match(/\d+$/)?.[0] ?? ''), px + SQUARE / 2, py + SQUARE / 2 + 1)
+  }
+
+  for (const overlay of overlays) {
+    for (const s of overlay.squares) {
+      const vx = s.x - view.x
+      const vy = s.y - view.y
+      if (vx < 0 || vy < 0 || vx >= VIEW_COLS || vy >= VIEW_ROWS) continue
+      g.fillStyle = overlay.fill
+      g.fillRect(vx * SQUARE, vy * SQUARE, SQUARE, SQUARE)
+      if (overlay.edge) {
+        g.strokeStyle = overlay.edge
+        g.lineWidth = 3
+        g.strokeRect(vx * SQUARE + 1.5, vy * SQUARE + 1.5, SQUARE - 3, SQUARE - 3)
+      }
+    }
   }
 }
 

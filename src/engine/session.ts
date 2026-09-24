@@ -74,6 +74,12 @@ export interface SessionUi {
    * for them. Returns 'run' if the party tries to flee, otherwise when the turn ends.
    */
   battleTurn(battle: Battle, fighter: Fighter, cast: () => Promise<string[]>, use: () => Promise<string[]>): Promise<'done' | 'run'>
+  /**
+   * A page that can point at the grid answers this instead of a menu: for an area
+   * spell, the fighters under the blast at the square chosen; otherwise up to `count`
+   * of the fighters `among`, picked one by one. Nothing when the player thinks better of it.
+   */
+  aim?(battle: Battle, caster: Fighter, spell: Spell, choice: { kind: 'area' } | { kind: 'fighters'; among: readonly Fighter[]; count: number }): Promise<Fighter[] | undefined>
   /** The battle is over; take the map down. */
   battleEnd(): void
   /** The party changed: someone was hurt, paid, or picked. */
@@ -1211,7 +1217,27 @@ export class GameSession {
     if (!spell) return []
 
     let targets: Character[] = []
-    switch (spell.target) {
+    const from = battle?.fighterOf(caster.member.character)
+    if (battle && from && (spell.area || spell.target === 'foe' || spell.target === 'ally' || spell.target === 'foes')) {
+      // On the grid the spell lands somewhere: an area where it is aimed, everyone inside;
+      // otherwise on fighters in range, picked on the map when the page can, from a list when not.
+      let picked: Fighter[] | undefined
+      if (spell.area) {
+        picked = this.ui.aim ? await this.ui.aim(battle, from, spell, { kind: 'area' }) : battle.bestBlast(spell, from)?.targets
+      } else {
+        const own = spell.target === 'ally'
+        const among = battle.fighters.filter((o) => (own ? o.side === from.side : o.side !== from.side) && ['okay', 'asleep', 'held'].includes(o.combatant.member.character.status) && battle.reaches(spell, from, o))
+        if (among.length === 0) return [`NOBODY IS IN RANGE OF ${spell.name.toUpperCase()}.`]
+        const count = spell.target === 'foes' ? Math.min(spell.effect.count ?? 99, among.length) : 1
+        if (this.ui.aim) picked = await this.ui.aim(battle, from, spell, { kind: 'fighters', among, count })
+        else if (count === 1) {
+          const at = await this.ui.menu(own ? 'ON WHOM?' : 'AT WHOM?', [...among.map((o) => o.combatant.label), 'NOBODY'], 'vertical')
+          picked = among[at] ? [among[at]!] : undefined
+        } else picked = among.slice(0, count)
+      }
+      if (!picked || picked.length === 0) return []
+      targets = picked.map((t) => t.combatant.member.character)
+    } else switch (spell.target) {
       case 'self': targets = [caster.member.character]; break
       case 'party': targets = combat.party.map((c) => c.member.character); break
       case 'ally': {

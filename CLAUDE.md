@@ -56,6 +56,12 @@ one server-side, or check a `.DAX` into git is the wrong change.
   original's icon editor did, swapped to their action pose for a blow; the missiles
   and spell-lights from COMSPR — arrows, thrown axes and darts, sling stones, the
   bolt, the sparkles, the burst — flying and flashing over the art, never repainting it.
+- **Spells on the grid** — a fireball is a disc of twenty-one squares, a lightning bolt
+  a line, a sleep or a stinking cloud a block, each with the manual's range, and
+  everyone under it is hit, friend or foe; the page aims them with the mouse, the blast
+  drawn under the pointer before the click, and picks the targets of the rest by
+  clicking them on the field. The computer aims where the most foes and fewest
+  friends stand.
 - **The rules of the round** — zero hit points is unconscious, below it dying and
   bleeding a point a round to death at minus ten unless bandaged (B); trolls mend
   three a round and get up unless burnt or stood on, and must be finished; ghouls
