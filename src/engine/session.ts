@@ -33,11 +33,40 @@ import { spellById, type Spell, type SpellTarget } from '../formats/spells.js'
 import { canReadScroll, canScribe, isScroll, readFromScroll, scribe, scrollReader, scrollSpells } from './scrolls.js'
 import { autoPrepare, canCast, cast, forget, knownAt, memorise, ready, refresh, slots } from './casting.js'
 import { readyToTrain, train, TRAINING_COST } from './training.js'
-import { ready as readyItem, recompute, unready } from './equipment.js'
+import { ready as readyItem, recompute, slotOf, unready } from './equipment.js'
 import type { ItemType } from '../formats/items.js'
 import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writer.js'
 import { SAVED_GAME_EXTRA, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH } from '../formats/library.js'
 import { goldOf, pay, poolOnto } from './treasure.js'
+
+/** A character's sheet as data. */
+export interface SheetData {
+  name: string
+  title: string
+  level: number
+  experience: number
+  age: number
+  stats: [string, string][]
+  hp: number
+  hpMax: number
+  ac: number
+  thac0: number
+  movement: number
+  status: string
+  coins: string
+  items: { label: string; readied: boolean; wearable: boolean }[]
+  spells: string[]
+  prepared: string[]
+  caster: boolean
+}
+/** One class and level of a caster's book: how many slots, what is known, what is chosen. */
+export interface SpellChoice {
+  casterClass: 'cleric' | 'magic-user'
+  level: number
+  slots: number
+  known: { id: number; name: string }[]
+  chosen: number[]
+}
 
 export type MoveCommand = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight' | 'turnAround'
 
@@ -74,6 +103,10 @@ export interface SessionUi {
    * for them. Returns 'run' if the party tries to flee, otherwise when the turn ends.
    */
   battleTurn(battle: Battle, fighter: Fighter, cast: () => Promise<string[]>, use: () => Promise<string[]>): Promise<'done' | 'run'>
+  /** A page with an inventory panel readies and puts down by clicking; the session's toggleItem does the work. */
+  equip?(index: number): Promise<void>
+  /** A page with a memorisation panel chooses what a caster prepares; the session's spellChoices and setPrepared do the work. */
+  memorise?(index: number): Promise<void>
   /**
    * A page that can point at the grid answers this instead of a menu: for an area
    * spell, the fighters under the blast at the square chosen; otherwise up to `count`
@@ -985,6 +1018,7 @@ export class GameSession {
   async equip(index: number): Promise<void> {
     const member = this.roster.members[index]
     if (!member || this.running) return
+    if (this.ui.equip) { await this.ui.equip(index); return }
     const names = await this.names()
     const types = await this.types()
     if (types.length === 0) {
@@ -1082,6 +1116,70 @@ export class GameSession {
     return member ? this.sheetOf(member) : ''
   }
 
+  /** The sheet as data, for a page that lays it out itself. */
+  async sheetData(index: number): Promise<SheetData | undefined> {
+    const member = this.roster.members[index]
+    if (!member) return undefined
+    const names = await this.names()
+    const types = await this.types()
+    const c = member.character
+    const spells = canCast(c) ? await Promise.all(c.memorised.map((id) => this.spellName(id))) : []
+    const prepared = canCast(c) ? await Promise.all(c.prepared.map((id) => this.spellName(id))) : []
+    return {
+      name: c.name,
+      title: `${['MALE', 'FEMALE'][c.sex] ?? ''} ${raceName(c).toUpperCase()} ${className(c).toUpperCase()}`.trim(),
+      level: characterLevel(c),
+      experience: c.experience,
+      age: c.age,
+      stats: [['STR', `${c.stats.str}${c.stats.strPercent ? `/${c.stats.strPercent}` : ''}`], ['INT', String(c.stats.int)], ['WIS', String(c.stats.wis)], ['DEX', String(c.stats.dex)], ['CON', String(c.stats.con)], ['CHA', String(c.stats.cha)]],
+      hp: c.hpCurrent, hpMax: c.hpMax, ac: c.ac, thac0: c.thac0, movement: c.movement, status: c.status.toUpperCase(),
+      coins: describeCoins(c.money) || 'NO COINS',
+      items: member.items.map((item) => ({ label: itemDisplayName(item, names), readied: item.readied, wearable: slotOf(item, types) !== undefined })),
+      spells: spells.map((n) => n.toUpperCase()),
+      prepared: prepared.map((n) => n.toUpperCase()),
+      caster: canCast(c),
+    }
+  }
+
+  /** Readies an item or puts it down; the words when it cannot be. */
+  async toggleItem(index: number, at: number): Promise<string | undefined> {
+    const member = this.roster.members[index]
+    const item = member?.items[at]
+    if (!member || !item) return undefined
+    const types = await this.types()
+    if (types.length === 0) return 'THE ITEMS TABLE IS MISSING FROM THE FOLDER, SO NOTHING CAN BE READIED.'
+    if (item.readied) unready(member.character, member.items, at, types)
+    else if (!readyItem(member.character, member.items, at, types)) return 'THAT CANNOT BE READIED.'
+    this.ui.party(this.roster.members, this.roster.selected)
+    return undefined
+  }
+
+  /** What a caster may prepare: for each class and spell level, the slots and the spells known. */
+  async spellChoices(index: number): Promise<SpellChoice[]> {
+    const c = this.roster.members[index]?.character
+    if (!c || !canCast(c)) return []
+    const out: SpellChoice[] = []
+    for (const casterClass of ['cleric', 'magic-user'] as const) {
+      const perLevel = slots(c, casterClass)
+      for (let level = 1; level <= perLevel.length; level++) {
+        const count = perLevel[level - 1] ?? 0
+        if (count === 0) continue
+        const known = knownAt(c, casterClass, level)
+        out.push({ casterClass, level, slots: count, known: await Promise.all(known.map(async (id) => ({ id, name: (await this.spellName(id)).toUpperCase() }))), chosen: c.prepared.filter((id) => known.includes(id)) })
+      }
+    }
+    return out
+  }
+
+  /** What a caster will have after resting: the ids, as many as the slots allow. */
+  async setPrepared(index: number, ids: readonly number[]): Promise<void> {
+    const c = this.roster.members[index]?.character
+    if (!c) return
+    memorise(c, ids)
+    this.ui.print(`${c.name} WILL MEMORISE ${c.prepared.length} SPELL${c.prepared.length === 1 ? '' : 'S'} ON RESTING.`, true)
+    this.ui.party(this.roster.members, this.roster.selected)
+  }
+
   private async sheetOf(member: Member): Promise<string> {
     const names = await this.names()
     const c = member.character
@@ -1117,6 +1215,7 @@ export class GameSession {
     const who = await this.ui.menu('MEMORISE FOR:', [...casters.map((m) => m.character.name), 'DONE'], 'vertical')
     const member = casters[who]
     if (!member) return
+    if (this.ui.memorise) { await this.ui.memorise(this.roster.members.indexOf(member)); return }
     const c = member.character
     const how = await this.ui.menu(`${c.name}: ${c.prepared.length} PREPARED.`, ['CHOOSE EACH', 'AUTOMATIC', 'BACK'], 'horizontal')
     if (how === 1) {

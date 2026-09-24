@@ -227,8 +227,35 @@
     max-width: min(720px, 100%); max-height: 100%; overflow: auto; color: var(--parchment); backdrop-filter: blur(8px);
   }
   .overlay pre { margin: 0; white-space: pre-wrap; font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
-  .overlay .row { justify-content: flex-end; }
+  .overlay .row { justify-content: flex-end; position: sticky; bottom: -16px; margin: 12px -20px -16px; padding: 10px 20px 16px; background: #14100af6; }
   .overlay .row button { background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
+  #sheetBox { min-width: min(640px, 100%); }
+  .sheetHead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .sheetHead h3 { margin: 0; font-size: 18px; }
+  .sheetHead .sub { margin: 0; color: #c9b990; font-size: 13px; }
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 12px 0; }
+  .stats div { background: #241c0e; border-radius: 8px; padding: 6px 4px; text-align: center; }
+  .stats b { display: block; font-size: 11px; color: #c9b990; font-weight: 600; }
+  .vitals { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 10px; color: #f0e6cf; }
+  .vitals span b { color: #c9b990; font-weight: 600; margin-right: 4px; }
+  .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px; margin: 6px 0 10px; }
+  .items button { text-align: left; background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); padding: 6px 10px; display: flex; gap: 8px; align-items: center; }
+  .items button.readied { border-color: var(--accent); }
+  .items button i { font-style: normal; width: 14px; text-align: center; color: var(--accent); }
+  .items button:disabled { opacity: .7; }
+  .spellLine { font-size: 13px; color: #c9b990; margin: 4px 0; }
+  .book h4 { margin: 12px 0 6px; font-size: 13.5px; color: #c9b990; }
+  .book .known { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px; }
+  .book .known div { display: flex; align-items: center; gap: 6px; background: #241c0e; border-radius: 8px; padding: 4px 8px; }
+  .book .known div span { flex: 1; font-size: 13px; }
+  .book .known button { padding: 2px 9px; background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
+  .book .count { min-width: 18px; text-align: center; color: var(--accent); font-variant-numeric: tabular-nums; }
+  #tip {
+    position: fixed; z-index: 20; pointer-events: none; display: none;
+    background: #14100af0; border: 1px solid var(--parchment-edge); border-radius: 8px; padding: 6px 10px;
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--parchment); white-space: pre;
+  }
+  #tip.shown { display: block; }
   #keys dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13.5px; }
   #keys dt { text-align: right; } #keys dd { margin: 0; color: var(--ink-dim); }
 
@@ -357,11 +384,18 @@
   </div>
 
   <div id="sheet" class="overlay">
-    <div class="box">
-      <pre id="sheetText"></pre>
-      <div class="row"><button id="sheetEquip">Equip</button><button id="sheetDone" class="primary">Done</button></div>
+    <div class="box" id="sheetBox">
+      <div id="sheetBody"></div>
+      <div class="row"><button id="sheetDone" class="primary">Done</button></div>
     </div>
   </div>
+  <div id="book" class="overlay">
+    <div class="box" id="bookBox">
+      <div id="bookBody" class="book"></div>
+      <div class="row"><button id="bookAuto">Automatic</button><button id="bookDone" class="primary">Done</button></div>
+    </div>
+  </div>
+  <div id="tip"></div>
   <div id="log" class="overlay">
     <div class="box">
       <pre id="logText"></pre>

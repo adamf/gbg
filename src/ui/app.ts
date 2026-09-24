@@ -65,7 +65,10 @@ const STATUS_SHORT: Record<string, string> = { unconscious: 'UNCON', dying: 'DYI
 const battleInfo = el('battleInfo')
 const needle = el('needle')
 const sheetOverlay = el('sheet')
-const sheetText = el('sheetText')
+const sheetBody = el('sheetBody')
+const bookOverlay = el('book')
+const bookBody = el('bookBody')
+const tip = el('tip')
 const logOverlay = el('log')
 const logText = el('logText')
 const keysOverlay = el('keys')
@@ -73,7 +76,9 @@ const searchButton = el('searchButton')
 /** Whichever overlay is up, so the keys go to it. */
 let openOverlay: HTMLElement | undefined
 function showOverlay(which: HTMLElement): void { closeOverlays(); which.classList.add('shown'); openOverlay = which }
-function closeOverlays(): void { for (const o of [sheetOverlay, logOverlay, keysOverlay]) o.classList.remove('shown'); openOverlay = undefined }
+function closeOverlays(): void { for (const o of [sheetOverlay, bookOverlay, logOverlay, keysOverlay]) o.classList.remove('shown'); openOverlay = undefined; bookClosed?.(); bookClosed = undefined }
+/** Resolves the memorisation panel's promise when it closes. */
+let bookClosed: (() => void) | undefined
 /** Everything the game has said, for the log. */
 const history: string[] = []
 const HISTORY = 300
@@ -457,6 +462,9 @@ const pageUi: SessionUi = {
     })
   },
 
+  equip: (index) => openSheet(index),
+  memorise: (index) => openBook(index),
+
   battleEnd() {
     openTurn = undefined
     battleArt = undefined
@@ -789,13 +797,81 @@ function leaveLevel(): void {
   startScreen.style.display = 'grid'
 }
 
-/** A character's sheet in an overlay, with the way to the equipment menu. */
+/** A character's sheet in an overlay: the numbers, and the pack, where a click readies or puts down. */
 async function openSheet(index: number): Promise<void> {
   const current = session
   if (!current || current.busy || openMenu) return
-  sheetText.textContent = await current.sheet(index)
+  const data = await current.sheetData(index)
+  if (!data) return
+  const h = (tag: string, cls: string | undefined, text?: string): HTMLElement => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+  const head = h('div', 'sheetHead')
+  head.append(h('h3', undefined, data.name), h('p', 'sub', `${data.title} · LEVEL ${data.level} · ${data.experience} XP · AGE ${data.age}`))
+  const stats = h('div', 'stats')
+  for (const [label, value] of data.stats) { const cell = h('div', undefined); cell.append(h('b', undefined, label), document.createTextNode(value)); stats.append(cell) }
+  const vitals = h('div', 'vitals')
+  const vitalPairs: [string, string][] = [['HP', `${data.hp}/${data.hpMax}`], ['AC', String(data.ac)], ['THAC0', String(data.thac0)], ['MOVE', String(data.movement)], ['', data.status], ['', data.coins]]
+  for (const [label, value] of vitalPairs) {
+    const span = h('span', undefined); if (label) span.append(h('b', undefined, label)); span.append(document.createTextNode(value)); vitals.append(span)
+  }
+  const items = h('div', 'items')
+  data.items.forEach((item, at) => {
+    const button = h('button', item.readied ? 'readied' : undefined) as HTMLButtonElement
+    button.append(h('i', undefined, item.readied ? '●' : '○'), document.createTextNode(item.label))
+    button.title = item.readied ? 'Put down' : item.wearable ? 'Ready' : 'Carried'
+    button.addEventListener('click', () => {
+      void current.toggleItem(index, at).then((problem) => { if (problem) pageUi.print(problem, true); void openSheet(index) })
+    })
+    items.append(button)
+  })
+  sheetBody.replaceChildren(head, stats, vitals, h('div', 'spellLine', data.items.length > 0 ? 'THE PACK — CLICK TO READY OR PUT DOWN' : 'NOTHING CARRIED'), items)
+  if (data.caster) {
+    sheetBody.append(h('div', 'spellLine', `MEMORISED: ${data.spells.length > 0 ? data.spells.join(', ') : 'NONE'}`))
+    sheetBody.append(h('div', 'spellLine', `PREPARED FOR THE NEXT REST: ${data.prepared.length > 0 ? data.prepared.join(', ') : 'NONE'}`))
+  }
   showOverlay(sheetOverlay)
-  el('sheetEquip').onclick = () => { closeOverlays(); void current.equip(index) }
+}
+
+/** Camp's memorise panel: every slot a caster has, and the book to fill them from. */
+function openBook(index: number): Promise<void> {
+  const current = session
+  if (!current) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    void current.spellChoices(index).then((choices) => {
+      const chosen = new Map<number, number>()
+      for (const choice of choices) for (const id of choice.chosen) chosen.set(id, (chosen.get(id) ?? 0) + 1)
+      const render = (): void => {
+        bookBody.replaceChildren()
+        const name = current.roster.members[index]?.character.name ?? ''
+        const title = document.createElement('h3'); title.textContent = `${name}: WHAT TO MEMORISE`; title.style.margin = '0 0 4px'
+        bookBody.append(title)
+        for (const choice of choices) {
+          const used = choice.known.reduce((n, k) => n + (chosen.get(k.id) ?? 0), 0)
+          const head = document.createElement('h4')
+          head.textContent = `${choice.casterClass.toUpperCase()} LEVEL ${choice.level} — ${used} OF ${choice.slots} SLOT${choice.slots === 1 ? '' : 'S'}`
+          bookBody.append(head)
+          const list = document.createElement('div'); list.className = 'known'
+          for (const spell of choice.known) {
+            const row = document.createElement('div')
+            const label = document.createElement('span'); label.textContent = spell.name
+            const count = document.createElement('span'); count.className = 'count'; count.textContent = String(chosen.get(spell.id) ?? 0)
+            const less = document.createElement('button'); less.textContent = '−'; less.disabled = !(chosen.get(spell.id) ?? 0)
+            less.addEventListener('click', () => { chosen.set(spell.id, (chosen.get(spell.id) ?? 0) - 1); render() })
+            const more = document.createElement('button'); more.textContent = '+'; more.disabled = used >= choice.slots
+            more.addEventListener('click', () => { chosen.set(spell.id, (chosen.get(spell.id) ?? 0) + 1); render() })
+            row.append(label, less, count, more)
+            list.append(row)
+          }
+          bookBody.append(list)
+        }
+      }
+      const ids = (): number[] => { const out: number[] = []; for (const [id, n] of chosen) for (let i = 0; i < n; i++) out.push(id); return out }
+      el('bookDone').onclick = () => { void current.setPrepared(index, ids()).then(() => closeOverlays()) }
+      el('bookAuto').onclick = () => { closeOverlays(); void current.setPrepared(index, []).then(async () => { const member = current.roster.members[index]; if (member) { const { autoPrepare } = await import('../engine/casting.js'); autoPrepare(member.character); pageUi.print(`${member.character.name} PREPARES THE USUAL.`, true) } }) }
+      bookClosed = resolve
+      render()
+      showOverlay(bookOverlay)
+    })
+  })
 }
 
 /** A movement command from a key or a pad button. */
@@ -837,7 +913,26 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#actions butt
   button.addEventListener('click', () => doAction(button.dataset.act!))
 }
 for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
-for (const overlay of [sheetOverlay, logOverlay, keysOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+// Over a fighter on the field, a word or two about them.
+battleCanvas.addEventListener('mousemove', (event) => {
+  const battle = openTurn?.battle ?? (window as unknown as { gbg?: { battle?: Battle } }).gbg?.battle
+  if (!battle || !battlePanel.classList.contains('shown')) { tip.classList.remove('shown'); return }
+  const rect = battleCanvas.getBoundingClientRect()
+  const focus = openTurn?.fighter ?? battle.current
+  const view = viewport(battle, focus)
+  const x = view.x + Math.floor(((event.clientX - rect.left) * battleCanvas.width) / rect.width / SQUARE)
+  const y = view.y + Math.floor(((event.clientY - rect.top) * battleCanvas.height) / rect.height / SQUARE)
+  const f = battle.at(x, y)
+  if (!f) { tip.classList.remove('shown'); return }
+  const c = f.combatant.member.character
+  tip.textContent = `${f.combatant.label}\nHP ${c.hpCurrent}/${c.hpMax}  AC ${c.ac}${c.status !== 'okay' ? `  ${c.status.toUpperCase()}` : ''}`
+  tip.style.left = `${event.clientX + 14}px`
+  tip.style.top = `${event.clientY + 14}px`
+  tip.classList.add('shown')
+})
+battleCanvas.addEventListener('mouseleave', () => tip.classList.remove('shown'))
+
 // Outdoors a click on the map rides a square toward the point clicked.
 overheadCanvas.addEventListener('click', (event) => {
   if (!session || session.busy || openMenu || openOverlay || !session.overhead) return
