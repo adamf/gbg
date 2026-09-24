@@ -18,6 +18,8 @@ import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
 import { mapName } from '../formats/detect.js'
 import { drawMinimap } from './minimap.js'
+import { deleteSlot, listSlots, readSlot, writeSlot, type SlotMeta } from './saves.js'
+import type { CreateView } from '../engine/session.js'
 import { drawOverland } from './overland-view.js'
 import type { OverlandMap } from '../formats/overland.js'
 
@@ -73,14 +75,21 @@ const turns = el('turns')
 const shopOverlay = el('shop')
 const hallOverlay = el('hall')
 const campOverlay = el('camp')
+const createOverlay = el('create')
+const savesOverlay = el('saves')
 const logOverlay = el('log')
 const logText = el('logText')
 const keysOverlay = el('keys')
 const searchButton = el('searchButton')
 /** Whichever overlay is up, so the keys go to it. */
 let openOverlay: HTMLElement | undefined
-function showOverlay(which: HTMLElement): void { closeOverlays(); which.classList.add('shown'); openOverlay = which }
-function closeOverlays(): void { for (const o of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay]) o.classList.remove('shown'); openOverlay = undefined; bookClosed?.(); bookClosed = undefined; shopClosed?.(); shopClosed = undefined; hallClosed?.(); hallClosed = undefined; campClosed?.(); campClosed = undefined }
+const ALL_OVERLAYS = (): HTMLElement[] => [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, savesOverlay]
+/** Shows one overlay in place of any other, without telling the others they were closed. */
+function showOverlay(which: HTMLElement): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); which.classList.add('shown'); openOverlay = which }
+/** Closes whatever is up and tells its panel so. */
+function closeOverlays(): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); openOverlay = undefined; const closers = [bookClosed, shopClosed, hallClosed, campClosed, createClosed, savesClosed]; bookClosed = shopClosed = hallClosed = campClosed = createClosed = savesClosed = undefined; for (const closer of closers) closer?.() }
+let createClosed: (() => void) | undefined
+let savesClosed: (() => void) | undefined
 let hallClosed: (() => void) | undefined
 let campClosed: (() => void) | undefined
 /** Resolves the shop panel's promise when it closes. */
@@ -108,17 +117,77 @@ function showFighter(f: Fighter | undefined): void {
 }
 const continueButton = el<HTMLButtonElement>('continue')
 
-const SAVE_KEY = 'goldbox-web:save'
 
 function storedSnapshot(): Snapshot | undefined {
+  const [latest] = listSlots()
+  return latest ? readSlot(latest.id) : undefined
+}
+
+/** What a save of the game now would say about itself, with the map as a small picture. */
+function slotMetaNow(): Omit<SlotMeta, 'id' | 'savedAt'> {
+  const current = session
+  const time = current?.time ?? { day: 0, hour: 0, minute: 0 }
+  let thumb: string | undefined
   try {
-    const raw = localStorage.getItem(SAVE_KEY)
-    if (!raw) return undefined
-    const parsed = JSON.parse(raw) as Snapshot
-    return parsed.version === 1 ? parsed : undefined
-  } catch {
-    return undefined
-  }
+    const source = current?.overhead ? overheadCanvas : mapCanvas
+    const small = document.createElement('canvas'); small.width = 96; small.height = 96
+    const g = small.getContext('2d')!; g.imageSmoothingEnabled = false
+    g.drawImage(source, 0, 0, source.width, source.height, 0, 0, 96, 96)
+    thumb = small.toDataURL('image/png')
+  } catch { thumb = undefined }
+  return { where: levelName.textContent || 'Somewhere', day: time.day, hour: time.hour, minute: time.minute, party: current?.roster.members.map((m) => m.character.name) ?? [], thumb }
+}
+
+/**
+ * The slot panel: every save with its picture, where it stands and who is in it.
+ * In save mode a slot can be overwritten or a new one made; in load mode one is chosen.
+ */
+function openSaves(mode: 'save' | 'load'): Promise<Snapshot | undefined> {
+  return new Promise((resolve) => {
+    const words = el('savesWords')
+    let done = false
+    const finish = (value: Snapshot | undefined): void => { if (done) return; done = true; savesClosed = undefined; closeOverlays(); resolve(value) }
+    const render = (): void => {
+      const slots = listSlots()
+      el('savesTitle').textContent = mode === 'save' ? 'SAVE THE GAME' : 'SAVED GAMES'
+      el('savesNew').hidden = mode !== 'save'
+      el('slots').replaceChildren(...(slots.length === 0 ? [Object.assign(document.createElement('span'), { className: 'spellLine', textContent: 'NO SAVED GAMES YET.' })] : slots.map((slot) => {
+        const card = document.createElement('div'); card.className = 'slot'
+        if (slot.thumb) { const img = document.createElement('img'); img.src = slot.thumb; img.alt = ''; card.append(img) } else card.append(Object.assign(document.createElement('div'), { className: 'blank' }))
+        const body = document.createElement('div')
+        const t = document.createElement('div'); t.className = 't'; t.textContent = `${slot.id}. ${slot.where}`
+        const d = document.createElement('div'); d.className = 'd'
+        d.textContent = `Day ${slot.day}, ${String(slot.hour).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} · ${slot.party.join(', ')}\nSaved ${new Date(slot.savedAt).toLocaleString()}`
+        d.style.whiteSpace = 'pre-line'
+        const acts = document.createElement('div'); acts.className = 'acts'
+        const main = document.createElement('button'); main.className = 'primary'
+        main.textContent = mode === 'save' ? 'Save here' : 'Load'
+        main.addEventListener('click', () => {
+          if (mode === 'load') { finish(readSlot(slot.id)); return }
+          const written = session && writeSlot(slotMetaNow(), slot.id, session.snapshot())
+          words.textContent = written ? `SAVED IN SLOT ${slot.id}.` : 'THE GAME COULD NOT BE SAVED HERE.'
+          render()
+        })
+        const del = document.createElement('button'); del.textContent = 'Delete'
+        del.addEventListener('click', () => { deleteSlot(slot.id); words.textContent = `SLOT ${slot.id} DELETED.`; render() })
+        acts.append(main, del)
+        body.append(t, d, acts)
+        card.append(body)
+        return card
+      })))
+      continueButton.hidden = slots.length === 0
+    }
+    el('savesNew').onclick = () => {
+      const written = session && writeSlot(slotMetaNow(), undefined, session.snapshot())
+      words.textContent = written ? `SAVED IN SLOT ${written.id}.` : 'THE GAME COULD NOT BE SAVED HERE.'
+      render()
+    }
+    el('savesDone').onclick = () => finish(undefined)
+    words.textContent = ''
+    savesClosed = () => finish(undefined)
+    render()
+    showOverlay(savesOverlay)
+  })
 }
 const notes = el('notes')
 
@@ -751,14 +820,64 @@ const pageUi: SessionUi = {
 
   saved() {
     if (!session) return
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(session.snapshot()))
-      continueButton.hidden = false
-      pageUi.print('THE GAME IS SAVED IN THIS BROWSER.', true)
-    } catch (error) {
-      pageUi.print('THE GAME COULD NOT BE SAVED HERE.', true)
-      note(`save failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    void openSaves('save')
+  },
+
+  /** Rolling a party by mouse: race, dice, the classes the dice allow, sex, alignment, a name; a roster that fills up. */
+  create(view: CreateView) {
+    return new Promise<void>((resolve) => {
+      let race = view.races[0]!
+      let stats = view.roll(race)
+      let classIndex: number | undefined
+      let sex: 0 | 1 = 0
+      let alignment = 0
+      const words = el('createWords')
+      const choice = (host: HTMLElement, labels: string[], picked: number, onPick: (i: number) => void): void => {
+        host.replaceChildren(...labels.map((label, i) => { const b = document.createElement('button'); b.textContent = label; if (i === picked) b.classList.add('picked'); b.addEventListener('click', () => onPick(i)); return b }))
+      }
+      const render = (): void => {
+        choice(el('createRaces'), view.races.map((r) => r.toUpperCase()), view.races.indexOf(race), (i) => { race = view.races[i]!; stats = view.roll(race); classIndex = undefined; render() })
+        const statsHost = el('createStats'); statsHost.replaceChildren()
+        for (const [label, value] of Object.entries(stats)) { const cell = document.createElement('div'); const b = document.createElement('b'); b.textContent = label.toUpperCase(); cell.append(b, String(value)); statsHost.append(cell) }
+        const allowed = view.classes(race, stats)
+        if (classIndex !== undefined && !allowed.includes(classIndex)) classIndex = undefined
+        el('createRollWords').textContent = allowed.length === 0 ? 'THESE DICE ALLOW NO CLASS FOR THAT RACE. ROLL AGAIN.' : ''
+        choice(el('createClasses'), allowed.map((i) => view.classNames[i]!.toUpperCase()), classIndex === undefined ? -1 : allowed.indexOf(classIndex), (i) => { classIndex = allowed[i]; render() })
+        choice(el('createSex'), ['MALE', 'FEMALE'], sex, (i) => { sex = i as 0 | 1; render() })
+        choice(el('createAlign'), view.alignments, alignment, (i) => { alignment = i; render() })
+        const members = view.members()
+        el('createRoster').replaceChildren(...(members.length === 0 ? [Object.assign(document.createElement('span'), { className: 'spellLine', textContent: 'NOBODY YET. SIX AT MOST.' })] : members.map((m, i) => {
+          const row = document.createElement('div'); row.className = 'who'
+          const n = document.createElement('div'); n.className = 'n'; n.textContent = m.name
+          const acts = document.createElement('div'); acts.className = 'acts'
+          const drop = document.createElement('button'); drop.textContent = 'Remove'; drop.addEventListener('click', () => { view.remove(i); render() })
+          acts.append(drop)
+          const d = document.createElement('div'); d.className = 'd'; d.textContent = m.title
+          row.append(n, acts, d)
+          return row
+        })))
+        ;(el('createAdd') as HTMLButtonElement).disabled = classIndex === undefined || members.length >= 6
+        ;(el('createDone') as HTMLButtonElement).disabled = members.length === 0
+      }
+      el('createRoll').onclick = () => { stats = view.roll(race); classIndex = undefined; render() }
+      el('createAdd').onclick = () => {
+        if (classIndex === undefined) return
+        const name = (el('createName') as HTMLInputElement).value
+        void view.add({ name, race, classIndex, sex, alignment, stats }).then((sheet) => {
+          words.textContent = `${sheet.name} JOINS: ${sheet.title}, HP ${sheet.hpMax}, AC ${sheet.ac}.`
+          ;(el('createName') as HTMLInputElement).value = ''
+          stats = view.roll(race); classIndex = undefined
+          render()
+        })
+      }
+      el('createPremade').onclick = () => { while (view.members().length > 0) view.remove(0); closeOverlays(); resolve() }
+      el('createDone').onclick = () => { closeOverlays(); resolve() }
+      createClosed = resolve
+      words.textContent = ''
+      render()
+      showOverlay(createOverlay)
+      ;(el('createName') as HTMLInputElement).focus()
+    })
   },
 
   note,
@@ -826,8 +945,9 @@ async function newGame(): Promise<void> {
 
 async function continueGame(): Promise<void> {
   const lib = library
-  const snapshot = storedSnapshot()
-  if (!lib || !snapshot) return
+  if (!lib) return
+  const snapshot = listSlots().length === 1 ? storedSnapshot() : await openSaves('load')
+  if (!snapshot) return
   const session = await openPlayScreen(lib)
   await session.load(snapshot)
 }
@@ -919,6 +1039,7 @@ function refreshHud(state: PartyState): void {
 
 function leaveLevel(): void {
   viewer?.stop()
+  if (library && levels.length > 0) setStatus(`${library.game.title} — ${levels.length} level${levels.length === 1 ? '' : 's'}.`)
   session = undefined
   continueButton.hidden = storedSnapshot() === undefined
   playScreen.classList.remove('shown')
@@ -1055,7 +1176,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#actions butt
   button.addEventListener('click', () => doAction(button.dataset.act!))
 }
 for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
-for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, savesOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
 // Over a fighter on the field, a word or two about them.
 battleCanvas.addEventListener('mousemove', (event) => {
   const battle = openTurn?.battle ?? (window as unknown as { gbg?: { battle?: Battle } }).gbg?.battle

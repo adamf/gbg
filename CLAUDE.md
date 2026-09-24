@@ -102,7 +102,10 @@ one server-side, or check a `.DAX` into git is the wrong change.
   buyer picked and every ware and pack item priced, the training hall a panel with
   each class's level and the experience still needed and a Train button where one
   qualifies, camp a panel with everyone's wounds and spell slots and the hours a rest
-  will take, and a strip above the field shows the round's order of play.
+  will take, a strip above the field shows the round's order of play, a new party is
+  rolled in a panel (race, dice, the classes the dice allow, sex, alignment, name),
+  and saves are numbered slots in the browser's storage with a picture of the map,
+  the day and hour and the party, chosen from a panel to save into or load.
 - **Headless play** — `src/headless/driver.ts` runs a session with no page: every
   prompt queues for the caller and the state is a plain object. `npm run headless --
   <folder>` is that as a JSON-lines conversation on stdin/stdout, and `npm run mcp --

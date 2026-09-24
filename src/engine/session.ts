@@ -71,6 +71,20 @@ export interface CampView {
   scribe(): Promise<'stay' | 'leave'>
 }
 
+/** Rolling a party for a page that lays it out: the races, the dice, the classes the dice allow, and the roster so far. */
+export interface CreateView {
+  races: string[]
+  alignments: string[]
+  classNames: string[]
+  roll(race: string): { str: number; int: number; wis: number; dex: number; con: number; cha: number }
+  /** The class indices the race may take and the dice allow. */
+  classes(race: string, stats: { str: number; int: number; wis: number; dex: number; con: number; cha: number }): number[]
+  /** Makes the character and adds them to the party; the sheet. */
+  add(rolled: { name: string; race: string; classIndex: number; sex: 0 | 1; alignment: number; stats: { str: number; int: number; wis: number; dex: number; con: number; cha: number } }): Promise<SheetData>
+  remove(index: number): void
+  members(): { name: string; title: string }[]
+}
+
 /** A character's sheet as data. */
 export interface SheetData {
   name: string
@@ -145,6 +159,8 @@ export interface SessionUi {
   train?(view: TrainingView): Promise<void>
   /** A page with a camp panel; returns when the party breaks camp. */
   camp?(view: CampView): Promise<void>
+  /** A page with a party-creation panel; resolves with the party rolled, empty for the pre-made one. */
+  create?(view: CreateView): Promise<void>
   /**
    * A page that can point at the grid answers this instead of a menu: for an area
    * spell, the fighters under the blast at the square chosen; otherwise up to `count`
@@ -1070,6 +1086,27 @@ export class GameSession {
     const random = this.random
     const types = await this.types()
     const members: Member[] = []
+    if (this.ui.create) {
+      const session = this
+      const races = RACES.filter((r) => r !== 'monster')
+      await this.ui.create({
+        races: [...races],
+        alignments: [...ALIGNMENTS],
+        classNames: [...CLASSES],
+        roll: (race) => rollStats(race as (typeof races)[number], random),
+        classes: (race, stats) => (CLASSES_BY_RACE[race as keyof typeof CLASSES_BY_RACE] ?? []).filter((i) => qualifies(i, stats)),
+        add: async (rolled) => {
+          const character = createCharacter({ ...rolled, race: rolled.race as (typeof races)[number], name: rolled.name.trim() || `HERO ${members.length + 1}` }, random)
+          recompute(character, [], types)
+          members.push({ character, items: [] })
+          session.roster.members.splice(0, session.roster.members.length, ...members)
+          return (await session.sheetData(members.length - 1))!
+        },
+        remove: (index) => { members.splice(index, 1); session.roster.members.splice(0, session.roster.members.length, ...members) },
+        members: () => members.map((m) => ({ name: m.character.name, title: `${raceName(m.character).toUpperCase()} ${className(m.character).toUpperCase()}` })),
+      })
+      return members
+    }
     while (members.length < 6) {
       const races = RACES.filter((r) => r !== 'monster')
       const start = await this.ui.menu(`${members.length} IN THE PARTY. ADD SOMEONE?`, [...races.map((r) => r.toUpperCase()), members.length > 0 ? 'THE PARTY IS COMPLETE' : 'USE THE PRE-MADE PARTY'], 'vertical')
