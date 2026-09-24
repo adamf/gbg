@@ -10,6 +10,7 @@
 import type { Battle, Fighter } from '../engine/battle.js'
 import { RANDOM_CELLS } from '../engine/arena.js'
 import type { Rgba } from '../formats/ega.js'
+import { play } from './sound.js'
 
 export const SQUARE = 48
 export const VIEW_COLS = 13
@@ -224,6 +225,7 @@ export async function playEffects(canvas: HTMLCanvasElement, battle: Battle, act
     const targets = e.to.map((t) => centre(view, t))
     const first = targets[0] ?? from
     const colour = EGA[e.colour ?? 15]!
+    play(e.shape === 'lunge' ? (e.hit ? 'hit' : 'miss') : e.shape === 'arrow' || e.shape === 'streak' ? 'shot' : e.shape === 'bolt' ? 'bolt' : e.shape === 'burst' ? 'burst' : 'spell')
     switch (e.shape) {
       case 'lunge': {
         // The original swapped the icon for its action pose; a small step sells it.

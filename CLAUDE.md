@@ -105,7 +105,11 @@ one server-side, or check a `.DAX` into git is the wrong change.
   will take, a strip above the field shows the round's order of play, a new party is
   rolled in a panel (race, dice, the classes the dice allow, sex, alignment, name),
   and saves are numbered slots in the browser's storage with a picture of the map,
-  the day and hour and the party, chosen from a panel to save into or load.
+  the day and hour and the party, chosen from a panel to save into or load. The
+  ending's pictures are composed in layers on one screen with Next between them. Sound
+  is made in the page in the PC speaker's manner (the DOS release kept no sound data;
+  its beeps were code) for steps, blocked moves, blows, shots, spells, falls, coins,
+  rest and menus, with a Sound button to turn it off.
 - **Headless play** — `src/headless/driver.ts` runs a session with no page: every
   prompt queues for the caller and the state is a plain object. `npm run headless --
   <folder>` is that as a JSON-lines conversation on stdin/stdout, and `npm run mcp --

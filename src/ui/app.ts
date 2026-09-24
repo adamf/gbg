@@ -19,6 +19,7 @@ import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker 
 import { mapName } from '../formats/detect.js'
 import { drawMinimap } from './minimap.js'
 import { deleteSlot, listSlots, readSlot, writeSlot, type SlotMeta } from './saves.js'
+import { play, setSound, soundOn } from './sound.js'
 import type { CreateView } from '../engine/session.js'
 import { drawOverland } from './overland-view.js'
 import type { OverlandMap } from '../formats/overland.js'
@@ -77,19 +78,23 @@ const hallOverlay = el('hall')
 const campOverlay = el('camp')
 const createOverlay = el('create')
 const savesOverlay = el('saves')
+const endingOverlay = el('ending')
+const soundButton = el('soundButton')
+soundButton.classList.toggle('on', soundOn())
 const logOverlay = el('log')
 const logText = el('logText')
 const keysOverlay = el('keys')
 const searchButton = el('searchButton')
 /** Whichever overlay is up, so the keys go to it. */
 let openOverlay: HTMLElement | undefined
-const ALL_OVERLAYS = (): HTMLElement[] => [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, savesOverlay]
+const ALL_OVERLAYS = (): HTMLElement[] => [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, savesOverlay, endingOverlay]
 /** Shows one overlay in place of any other, without telling the others they were closed. */
 function showOverlay(which: HTMLElement): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); which.classList.add('shown'); openOverlay = which }
 /** Closes whatever is up and tells its panel so. */
-function closeOverlays(): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); openOverlay = undefined; const closers = [bookClosed, shopClosed, hallClosed, campClosed, createClosed, savesClosed]; bookClosed = shopClosed = hallClosed = campClosed = createClosed = savesClosed = undefined; for (const closer of closers) closer?.() }
+function closeOverlays(): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); openOverlay = undefined; const closers = [bookClosed, shopClosed, hallClosed, campClosed, createClosed, savesClosed, endingClosed]; bookClosed = shopClosed = hallClosed = campClosed = createClosed = savesClosed = endingClosed = undefined; for (const closer of closers) closer?.() }
 let createClosed: (() => void) | undefined
 let savesClosed: (() => void) | undefined
+let endingClosed: (() => void) | undefined
 let hallClosed: (() => void) | undefined
 let campClosed: (() => void) | undefined
 /** Resolves the shop panel's promise when it closes. */
@@ -284,6 +289,9 @@ const pageUi: SessionUi = {
 
   print(text, clear) {
     if (clear) textLog.textContent = ''
+    if (/ IS DEAD| DIES!|THE PARTY HAS FALLEN/.test(text)) play('fall')
+    else if (/THE PARTY RESTS/.test(text)) play('rest')
+    else if (/SHOPKEEPER PAYS|SHARES? .*(GOLD|COPPER|SILVER|PLATINUM)|HERE IS YOUR REWARD/.test(text)) play('coins')
     if (clear || history.length === 0) history.push(text); else history[history.length - 1] += text
     if (history.length > HISTORY) history.splice(0, history.length - HISTORY)
     // The original appended text to the same line; a printed number is part of a sentence.
@@ -311,6 +319,7 @@ const pageUi: SessionUi = {
         const slice = paged ? items.slice(start, start + PAGE) : items
         const labels = paged ? [...slice, 'NEXT PAGE', 'PREV PAGE'] : [...slice]
         const choose = (index: number): void => {
+          play('menu')
           if (paged && index === slice.length) { start = start + PAGE < items.length ? start + PAGE : 0; show(); return }
           if (paged && index === slice.length + 1) { start = start - PAGE >= 0 ? start - PAGE : Math.floor((items.length - 1) / PAGE) * PAGE; show(); return }
           clearMenu()
@@ -542,6 +551,39 @@ const pageUi: SessionUi = {
   },
 
   equip: (index) => openSheet(index),
+
+  /** The closing pictures, each filling the screen, the words beneath, Next between them. */
+  ending(pictures, words) {
+    return new Promise<void>((resolve) => {
+      const canvas = el<HTMLCanvasElement>('endingPic')
+      const caption = el('endingWords')
+      let at = 0
+      // The original built its closing scene in layers: each block over the last, the
+      // magenta key transparent, so the dragon lands in the frame and the walls close in.
+      const show = (): void => {
+        const first = pictures[0]
+        if (!first) return
+        if (at === 0) { canvas.width = first.width; canvas.height = first.height }
+        const g = canvas.getContext('2d')
+        const picture = pictures[at]
+        if (g && picture) {
+          const layer = document.createElement('canvas'); layer.width = picture.width; layer.height = picture.height
+          const pixels = new Uint8ClampedArray(picture.pixels)
+          for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 255 && pixels[i + 1] === 85 && pixels[i + 2] === 255) pixels[i + 3] = 0
+          layer.getContext('2d')!.putImageData(new ImageData(pixels, picture.width, picture.height), 0, 0)
+          if (at === 0) g.drawImage(layer, 0, 0)
+          else g.drawImage(layer, Math.floor((canvas.width - picture.width) / 2), Math.floor((canvas.height - picture.height) / 2))
+        }
+        caption.textContent = at === 0 ? words[0] ?? '' : at >= pictures.length - 1 ? words[1] ?? '' : ''
+        el('endingNext').textContent = at >= pictures.length - 1 ? 'The end' : 'Next'
+      }
+      el('endingNext').onclick = () => { if (at >= pictures.length - 1) { closeOverlays(); resolve(); return } at++; show() }
+      endingClosed = resolve
+      play('rest')
+      show()
+      showOverlay(endingOverlay)
+    })
+  },
 
   train(view) {
     return new Promise<void>((resolve) => {
@@ -966,8 +1008,8 @@ async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
 
   viewer?.dispose()
   viewer = new DungeonViewer(viewCanvas, {
-    onMove: (state) => refreshHud(state),
-    onBlocked: (state) => refreshHud(state),
+    onMove: (state) => { play('step'); refreshHud(state) },
+    onBlocked: (state) => { play('blocked'); refreshHud(state) },
   })
   viewer.resize()
   viewer.start()
@@ -1141,7 +1183,7 @@ function openBook(index: number): Promise<void> {
 function doMove(command: MoveCommand): void {
   if (!session || session.busy || openMenu || openOverlay) return
   // Outdoors the same commands ride: turns swing the compass, steps take an hour a square.
-  if (session.overhead) { void session.move(command); return }
+  if (session.overhead) { void session.move(command).then((moved) => play(moved ? 'step' : 'blocked')); return }
   // One step at a time: the viewer animates each, and the session stays in step with it.
   if (viewer?.isMoving) return
   // The session moves the party and runs the script; the viewer animates the same step.
@@ -1152,6 +1194,7 @@ function doMove(command: MoveCommand): void {
 function doAction(action: string): void {
   if (action === 'log') { logText.textContent = history.join('\n\n'); showOverlay(logOverlay); logText.parentElement!.scrollTop = 1e9; return }
   if (action === 'keys') { showOverlay(keysOverlay); return }
+  if (action === 'sound') { setSound(!soundOn()); soundButton.classList.toggle('on', soundOn()); return }
   if (!session || session.busy || openMenu || openOverlay) return
   const current = session
   if (action === 'camp') void current.camp()
@@ -1169,7 +1212,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#pad8 button[
   button.addEventListener('click', () => {
     const dir = Number(button.dataset.dir)
     if (openTurn && !openMenu) { if (!aiming && openTurn.battle.move(openTurn.fighter, PAD_STEPS[dir]!)) openTurn.refresh(); return }
-    if (session && !session.busy && !openMenu && session.overhead) void session.moveOverland(dir)
+    if (session && !session.busy && !openMenu && session.overhead) void session.moveOverland(dir).then((moved) => play(moved ? 'step' : 'blocked'))
   })
 }
 for (const button of document.querySelectorAll<HTMLButtonElement>('#actions button[data-act]')) {

@@ -161,6 +161,8 @@ export interface SessionUi {
   camp?(view: CampView): Promise<void>
   /** A page with a party-creation panel; resolves with the party rolled, empty for the pre-made one. */
   create?(view: CreateView): Promise<void>
+  /** A page that shows the closing pictures its own way; the pictures in order, and the closing words. */
+  ending?(pictures: readonly Rgba[], words: readonly string[]): Promise<void>
   /**
    * A page that can point at the grid answers this instead of a menu: for an area
    * spell, the fighters under the blast at the square chosen; otherwise up to `count`
@@ -1547,6 +1549,10 @@ export class GameSession {
     const archive = await this.library.archive('FINAL5.DAX')
     const { decodeAnyImage } = await import('../formats/image.js')
     const pictures = (archive?.blocks ?? []).map((b) => decodeAnyImage(b.data, 'FINAL5.DAX')?.frames[0]).filter((f): f is Rgba => f !== undefined)
+    if (this.ui.ending) {
+      await this.ui.ending(pictures, ['THE POOL OF RADIANCE IS NO MORE. PHLAN IS FREE.', 'YOU HAVE WON. THANK YOU FOR PLAYING.'])
+      return
+    }
     for (const [i, picture] of pictures.entries()) {
       this.ui.picture(picture)
       this.ui.print(i === 0 ? 'THE POOL OF RADIANCE IS NO MORE. PHLAN IS FREE.' : '', true)
