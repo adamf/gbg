@@ -290,7 +290,18 @@
   .createGrid h4 { margin: 8px 0 4px; font-size: 13px; color: #c9b990; }
   .createGrid input { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--parchment-edge); background: #1a140a; color: var(--parchment); width: 100%; }
   .createGrid .stats { margin: 6px 0; }
+  .createGrid .choices { min-height: 34px; align-content: flex-start; }
+  .createGrid .choices.tall { min-height: 112px; }
+  .createGrid #createClasses { min-height: 148px; }
+  .createGrid .roster.tall { min-height: 320px; align-content: start; }
+  .stats.dice { grid-template-columns: repeat(7, 1fr); }
+  .stats.dice .stat { font-variant-numeric: tabular-nums; padding: 6px 2px 4px; }
+  .stats.dice .v { display: block; min-height: 22px; font-size: 16px; font-weight: 600; }
+  .stats.dice .nudge { display: flex; justify-content: center; gap: 4px; margin-top: 4px; }
+  .stats.dice .nudge button { width: 26px; height: 22px; padding: 0; line-height: 1; font-size: 14px; background: #2a2113; border-color: var(--parchment-edge); color: var(--parchment); }
+  .stats.dice .nudge button:disabled { opacity: 0.3; }
   .rollRow { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px; }
+  .rollRow .spellLine { min-height: 1.4em; flex: 1; }
   .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
   .slot { display: grid; grid-template-columns: 96px 1fr; gap: 10px; background: #241c0e; border-radius: 10px; padding: 10px; }
   .slot img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 6px; background: #0b0d12; }
@@ -488,17 +499,17 @@
       <div class="createGrid">
         <div>
           <h4>RACE</h4><div class="choices" id="createRaces"></div>
-          <div class="rollRow"><button id="createRoll">Roll the dice</button><span id="createRollWords" class="spellLine"></span></div>
-          <div class="stats" id="createStats"></div>
-          <h4>CLASS</h4><div class="choices" id="createClasses"></div>
           <h4>SEX</h4><div class="choices" id="createSex"></div>
-          <h4>ALIGNMENT</h4><div class="choices" id="createAlign"></div>
+          <h4>CLASS</h4><div class="choices tall" id="createClasses"></div>
+          <h4>ALIGNMENT</h4><div class="choices tall" id="createAlign"></div>
+          <div class="rollRow"><button id="createRoll">Roll again</button><span id="createRollWords" class="spellLine"></span></div>
+          <div class="stats dice" id="createStats"></div>
           <h4>NAME</h4><input id="createName" maxlength="15" placeholder="Up to fifteen letters">
           <div class="rollRow"><button id="createAdd" class="primary">Add to the party</button><span id="createWords" class="spellLine"></span></div>
         </div>
         <div>
           <h4>THE PARTY</h4>
-          <div class="roster" id="createRoster"></div>
+          <div class="roster tall" id="createRoster"></div>
         </div>
       </div>
       <div class="row"><button id="createPremade">Use the pre-made party</button><button id="createDone" class="primary">Begin</button></div>

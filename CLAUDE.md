@@ -25,8 +25,13 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **A CLI** — `inspect` reports what a folder holds and disassembles scripts; `dump` extracts
   every picture to PNG and every level to JSON.
 
-- **Your own party** — a new game offers the pre-made six or rolling characters: race,
-  class the race allows, dice with the race's adjustments, first-level tables.
+- **Your own party** — a new game offers the pre-made six or rolling characters in the
+  original's order: race, sex, a class the race allows, an alignment the class allows, then
+  the dice as the original threw them (checked against the community's C# port of the
+  engine, coab): every ability the best of six 3d6+1, aged by the race's table, held to the
+  race's and sex's bounds and raised to the class's minimum; hit points the better of two
+  dice with constitution, shared between classes; and MODIFY, a point up or down on any
+  ability or the hit points within those bounds, strength running on into the percentile.
 - **The party** — characters and inventories read from the CHRDATA files a saved game
   names, with hit points, saving throws, coins and the selected-character view the
   scripts read at 0x6B00. Damage lands; nobody fights back yet.

@@ -20,7 +20,7 @@ import { mapName } from '../formats/detect.js'
 import { drawMinimap } from './minimap.js'
 import { deleteSlot, listSlots, readSlot, writeSlot, type SlotMeta } from './saves.js'
 import { play, setSound, soundOn } from './sound.js'
-import type { CreateView } from '../engine/session.js'
+import type { CreateKey, CreateView } from '../engine/session.js'
 import { drawOverland } from './overland-view.js'
 import type { OverlandMap } from '../formats/overland.js'
 
@@ -865,28 +865,70 @@ const pageUi: SessionUi = {
     void openSaves('save')
   },
 
-  /** Rolling a party by mouse: race, dice, the classes the dice allow, sex, alignment, a name; a roster that fills up. */
+  /** Rolling a party by mouse, in the original's order: race, sex, class, alignment, then the dice, MODIFY, a name; a roster that fills up. */
   create(view: CreateView) {
     return new Promise<void>((resolve) => {
       let race = view.races[0]!
-      let stats = view.roll(race)
-      let classIndex: number | undefined
       let sex: 0 | 1 = 0
-      let alignment = 0
+      let classIndex = view.classes(race)[0]!
+      let alignment = view.alignmentsFor(classIndex)[0]!
+      let draft = view.roll(race, sex, classIndex)
       const words = el('createWords')
       const choice = (host: HTMLElement, labels: string[], picked: number, onPick: (i: number) => void): void => {
         host.replaceChildren(...labels.map((label, i) => { const b = document.createElement('button'); b.textContent = label; if (i === picked) b.classList.add('picked'); b.addEventListener('click', () => onPick(i)); return b }))
       }
+      const reroll = (): void => { draft = view.roll(race, sex, classIndex) }
+      /** A small button that repeats while held, so a percentile can climb without a hundred clicks. */
+      const nudge = (label: string, act: () => void): HTMLButtonElement => {
+        const b = document.createElement('button'); b.textContent = label
+        let timer: ReturnType<typeof setInterval> | undefined
+        let delay: ReturnType<typeof setTimeout> | undefined
+        const stop = (): void => { if (timer) clearInterval(timer); if (delay) clearTimeout(delay); timer = delay = undefined }
+        b.addEventListener('pointerdown', (e) => { e.preventDefault(); stop(); act(); delay = setTimeout(() => { timer = setInterval(() => { if (b.disabled) stop(); else act() }, 45) }, 350) })
+        for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, stop)
+        return b
+      }
+      /** The dice and MODIFY only. The cells are built once and updated in place, so the panel never shifts and a held button stays under the pointer. */
+      const keys: CreateKey[] = ['str', 'int', 'wis', 'dex', 'con', 'cha', 'hp']
+      const cells = new Map<CreateKey, { v: HTMLSpanElement; down: HTMLButtonElement; up: HTMLButtonElement }>()
+      const buildDice = (): void => {
+        const statsHost = el('createStats'); statsHost.replaceChildren(); cells.clear()
+        for (const key of keys) {
+          const cell = document.createElement('div'); cell.className = 'stat'
+          const b = document.createElement('b'); b.textContent = key.toUpperCase()
+          const v = document.createElement('span'); v.className = 'v'
+          const row = document.createElement('div'); row.className = 'nudge'
+          const down = nudge('−', () => { draft = view.modify(draft, key, -1); renderDice() })
+          const up = nudge('+', () => { draft = view.modify(draft, key, 1); renderDice() })
+          row.append(down, up)
+          cell.append(b, v, row)
+          statsHost.append(cell)
+          cells.set(key, { v, down, up })
+        }
+      }
+      const renderDice = (): void => {
+        if (cells.size === 0) buildDice()
+        const bounds = view.limits(draft)
+        for (const key of keys) {
+          const cell = cells.get(key)!
+          const value = key === 'hp' ? draft.hp : draft.stats[key]
+          const [min, max] = bounds[key]
+          cell.v.textContent = key === 'str' && draft.stats.str === 18 && draft.strPercent > 0 ? `18/${String(draft.strPercent % 100).padStart(2, '0')}` : String(value)
+          cell.down.disabled = !(key === 'str' ? value > min || draft.strPercent > 0 : value > min)
+          cell.up.disabled = !(key === 'str' ? value < max || (draft.stats.str === 18 && view.modify(draft, 'str', 1).strPercent !== draft.strPercent) : value < max)
+          cell.down.title = `Down, no lower than ${min}`
+          cell.up.title = key === 'str' && max === 18 ? 'Up, to 18 and on into the percentile for a fighting class' : `Up, no higher than ${max}`
+        }
+        el('createRollWords').textContent = `AGE ${draft.age}. MODIFY WITH THE ARROWS, AS THE ORIGINAL ALLOWED: UP TO THE RACE'S BEST, HIT POINTS TO THE CLASS'S.`
+      }
       const render = (): void => {
-        choice(el('createRaces'), view.races.map((r) => r.toUpperCase()), view.races.indexOf(race), (i) => { race = view.races[i]!; stats = view.roll(race); classIndex = undefined; render() })
-        const statsHost = el('createStats'); statsHost.replaceChildren()
-        for (const [label, value] of Object.entries(stats)) { const cell = document.createElement('div'); const b = document.createElement('b'); b.textContent = label.toUpperCase(); cell.append(b, String(value)); statsHost.append(cell) }
-        const allowed = view.classes(race, stats)
-        if (classIndex !== undefined && !allowed.includes(classIndex)) classIndex = undefined
-        el('createRollWords').textContent = allowed.length === 0 ? 'THESE DICE ALLOW NO CLASS FOR THAT RACE. ROLL AGAIN.' : ''
-        choice(el('createClasses'), allowed.map((i) => view.classNames[i]!.toUpperCase()), classIndex === undefined ? -1 : allowed.indexOf(classIndex), (i) => { classIndex = allowed[i]; render() })
-        choice(el('createSex'), ['MALE', 'FEMALE'], sex, (i) => { sex = i as 0 | 1; render() })
-        choice(el('createAlign'), view.alignments, alignment, (i) => { alignment = i; render() })
+        choice(el('createRaces'), view.races.map((r) => r.toUpperCase()), view.races.indexOf(race), (i) => { race = view.races[i]!; const allowed = view.classes(race); if (!allowed.includes(classIndex)) classIndex = allowed[0]!; if (!view.alignmentsFor(classIndex).includes(alignment)) alignment = view.alignmentsFor(classIndex)[0]!; reroll(); render() })
+        choice(el('createSex'), ['MALE', 'FEMALE'], sex, (i) => { sex = i as 0 | 1; reroll(); render() })
+        const allowed = view.classes(race)
+        choice(el('createClasses'), allowed.map((i) => view.classNames[i]!.toUpperCase()), allowed.indexOf(classIndex), (i) => { classIndex = allowed[i]!; if (!view.alignmentsFor(classIndex).includes(alignment)) alignment = view.alignmentsFor(classIndex)[0]!; reroll(); render() })
+        const alignments = view.alignmentsFor(classIndex)
+        choice(el('createAlign'), alignments.map((a) => view.alignments[a]!), alignments.indexOf(alignment), (i) => { alignment = alignments[i]!; render() })
+        renderDice()
         const members = view.members()
         el('createRoster').replaceChildren(...(members.length === 0 ? [Object.assign(document.createElement('span'), { className: 'spellLine', textContent: 'NOBODY YET. SIX AT MOST.' })] : members.map((m, i) => {
           const row = document.createElement('div'); row.className = 'who'
@@ -898,17 +940,16 @@ const pageUi: SessionUi = {
           row.append(n, acts, d)
           return row
         })))
-        ;(el('createAdd') as HTMLButtonElement).disabled = classIndex === undefined || members.length >= 6
+        ;(el('createAdd') as HTMLButtonElement).disabled = members.length >= 6
         ;(el('createDone') as HTMLButtonElement).disabled = members.length === 0
       }
-      el('createRoll').onclick = () => { stats = view.roll(race); classIndex = undefined; render() }
+      el('createRoll').onclick = () => { reroll(); renderDice() }
       el('createAdd').onclick = () => {
-        if (classIndex === undefined) return
         const name = (el('createName') as HTMLInputElement).value
-        void view.add({ name, race, classIndex, sex, alignment, stats }).then((sheet) => {
+        void view.add({ name, alignment, draft }).then((sheet) => {
           words.textContent = `${sheet.name} JOINS: ${sheet.title}, HP ${sheet.hpMax}, AC ${sheet.ac}.`
           ;(el('createName') as HTMLInputElement).value = ''
-          stats = view.roll(race); classIndex = undefined
+          reroll()
           render()
         })
       }
@@ -916,6 +957,7 @@ const pageUi: SessionUi = {
       el('createDone').onclick = () => { closeOverlays(); resolve() }
       createClosed = resolve
       words.textContent = ''
+      cells.clear()
       render()
       showOverlay(createOverlay)
       ;(el('createName') as HTMLInputElement).focus()

@@ -38,6 +38,7 @@ import type { ItemType } from '../formats/items.js'
 import { writeCharacter, writeItems, writeSavedGame } from '../formats/save-writer.js'
 import { SAVED_GAME_EXTRA, SAVED_GAME_GLOBALS, SAVED_GAME_SCRATCH } from '../formats/library.js'
 import { goldOf, pay, poolOnto } from './treasure.js'
+import type { Draft } from './create.js'
 
 /** A shop for a page that lays it out itself: the shelf, the party with their prices, and the deals. Every call answers with the words to show. */
 export interface ShopView {
@@ -72,15 +73,34 @@ export interface CampView {
 }
 
 /** Rolling a party for a page that lays it out: the races, the dice, the classes the dice allow, and the roster so far. */
+export interface CreateDraft {
+  race: string
+  sex: 0 | 1
+  classIndex: number
+  age: number
+  stats: { str: number; int: number; wis: number; dex: number; con: number; cha: number }
+  strPercent: number
+  hp: number
+}
+
+export type CreateKey = 'str' | 'int' | 'wis' | 'dex' | 'con' | 'cha' | 'hp'
+
 export interface CreateView {
   races: string[]
   alignments: string[]
   classNames: string[]
-  roll(race: string): { str: number; int: number; wis: number; dex: number; con: number; cha: number }
-  /** The class indices the race may take and the dice allow. */
-  classes(race: string, stats: { str: number; int: number; wis: number; dex: number; con: number; cha: number }): number[]
+  /** The class indices the race may take. */
+  classes(race: string): number[]
+  /** The alignment indices the class may hold. */
+  alignmentsFor(classIndex: number): number[]
+  /** Fresh dice for the choices: age, abilities and hit points. */
+  roll(race: string, sex: 0 | 1, classIndex: number): CreateDraft
+  /** The original's MODIFY: a point up or down, within the race's, sex's and class's bounds. */
+  modify(draft: CreateDraft, key: CreateKey, delta: 1 | -1): CreateDraft
+  /** Those bounds, for the page to show. */
+  limits(draft: CreateDraft): Record<CreateKey, [min: number, max: number]>
   /** Makes the character and adds them to the party; the sheet. */
-  add(rolled: { name: string; race: string; classIndex: number; sex: 0 | 1; alignment: number; stats: { str: number; int: number; wis: number; dex: number; con: number; cha: number } }): Promise<SheetData>
+  add(rolled: { name: string; alignment: number; draft: CreateDraft }): Promise<SheetData>
   remove(index: number): void
   members(): { name: string; title: string }[]
 }
@@ -1114,25 +1134,35 @@ export class GameSession {
 
   /** Rolls up a party through the menus, for a new game without the pre-made six. */
   async createParty(): Promise<Member[]> {
-    const { ALIGNMENTS, CLASSES_BY_RACE, createCharacter, qualifies, rollStats } = await import('./create.js')
+    const { ALIGNMENTS, CLASSES_BY_RACE, alignmentsFor, createCharacter, limits, modify, rollDraft } = await import('./create.js')
     const { CLASSES, RACES } = await import('../formats/character.js')
     const random = this.random
     const types = await this.types()
     const members: Member[] = []
+    type Race = Exclude<(typeof RACES)[number], 'monster'>
+    const races = RACES.filter((r): r is Race => r !== 'monster')
+    const asDraft = (d: CreateDraft): Draft => ({ ...d, race: d.race as Race })
+    const build = async (rolled: { name: string; alignment: number; draft: CreateDraft }): Promise<Member> => {
+      const character = createCharacter({ name: rolled.name.trim() || `HERO ${members.length + 1}`, alignment: rolled.alignment, draft: asDraft(rolled.draft) }, random)
+      recompute(character, [], types)
+      const member: Member = { character, items: [] }
+      members.push(member)
+      this.roster.members.splice(0, this.roster.members.length, ...members)
+      return member
+    }
     if (this.ui.create) {
       const session = this
-      const races = RACES.filter((r) => r !== 'monster')
       await this.ui.create({
         races: [...races],
         alignments: [...ALIGNMENTS],
         classNames: [...CLASSES],
-        roll: (race) => rollStats(race as (typeof races)[number], random),
-        classes: (race, stats) => (CLASSES_BY_RACE[race as keyof typeof CLASSES_BY_RACE] ?? []).filter((i) => qualifies(i, stats)),
+        classes: (race) => [...(CLASSES_BY_RACE[race as Race] ?? [])],
+        alignmentsFor,
+        roll: (race, sex, classIndex) => rollDraft(race as Race, sex, classIndex, random),
+        modify: (draft, key, delta) => modify(asDraft(draft), key, delta),
+        limits: (draft) => limits(asDraft(draft)),
         add: async (rolled) => {
-          const character = createCharacter({ ...rolled, race: rolled.race as (typeof races)[number], name: rolled.name.trim() || `HERO ${members.length + 1}` }, random)
-          recompute(character, [], types)
-          members.push({ character, items: [] })
-          session.roster.members.splice(0, session.roster.members.length, ...members)
+          await build(rolled)
           return (await session.sheetData(members.length - 1))!
         },
         remove: (index) => { members.splice(index, 1); session.roster.members.splice(0, session.roster.members.length, ...members) },
@@ -1140,32 +1170,31 @@ export class GameSession {
       })
       return members
     }
+    // The text-only host: the original's order — race, sex, class, alignment, then the dice.
     while (members.length < 6) {
-      const races = RACES.filter((r) => r !== 'monster')
       const start = await this.ui.menu(`${members.length} IN THE PARTY. ADD SOMEONE?`, [...races.map((r) => r.toUpperCase()), members.length > 0 ? 'THE PARTY IS COMPLETE' : 'USE THE PRE-MADE PARTY'], 'vertical')
       const race = races[start]
       if (!race) break
-      let stats = rollStats(race, random)
-      for (;;) {
-        const line = `STR ${stats.str}  INT ${stats.int}  WIS ${stats.wis}  DEX ${stats.dex}  CON ${stats.con}  CHA ${stats.cha}`
-        const keep = await this.ui.menu(line, ['KEEP THESE', 'ROLL AGAIN'], 'horizontal')
-        if (keep === 0) break
-        stats = rollStats(race, random)
-      }
-      const allowed = (CLASSES_BY_RACE[race as keyof typeof CLASSES_BY_RACE] ?? []).filter((i) => qualifies(i, stats))
-      if (allowed.length === 0) {
-        this.ui.print('THOSE DICE ALLOW NO CLASS FOR THAT RACE. ROLL AGAIN.', true)
-        continue
-      }
-      const classIndex = allowed[await this.ui.menu('CLASS:', allowed.map((i) => CLASSES[i]!.toUpperCase()), 'vertical')]!
       const sex = (await this.ui.menu('SEX:', ['MALE', 'FEMALE'], 'horizontal')) as 0 | 1
-      const alignment = await this.ui.menu('ALIGNMENT:', [...ALIGNMENTS], 'vertical')
+      const allowed = CLASSES_BY_RACE[race] ?? []
+      const classIndex = allowed[await this.ui.menu('CLASS:', allowed.map((i) => CLASSES[i]!.toUpperCase()), 'vertical')]!
+      const alignments = alignmentsFor(classIndex)
+      const alignment = alignments[await this.ui.menu('ALIGNMENT:', alignments.map((a) => ALIGNMENTS[a]!), 'vertical')]!
+      let draft = rollDraft(race, sex, classIndex, random)
+      for (;;) {
+        const str = draft.stats.str === 18 && draft.strPercent > 0 ? `18/${String(draft.strPercent % 100).padStart(2, '0')}` : String(draft.stats.str)
+        const line = `STR ${str}  INT ${draft.stats.int}  WIS ${draft.stats.wis}  DEX ${draft.stats.dex}  CON ${draft.stats.con}  CHA ${draft.stats.cha}  HP ${draft.hp}  AGE ${draft.age}`
+        const keep = await this.ui.menu(line, ['KEEP THESE', 'ROLL AGAIN', 'MODIFY'], 'horizontal')
+        if (keep === 0) break
+        if (keep === 1) { draft = rollDraft(race, sex, classIndex, random); continue }
+        const keys: CreateKey[] = ['str', 'int', 'wis', 'dex', 'con', 'cha', 'hp']
+        const which = keys[await this.ui.menu('MODIFY WHICH?', keys.map((k) => k.toUpperCase()), 'horizontal')]!
+        const way = await this.ui.menu(`${which.toUpperCase()} ${which === 'hp' ? draft.hp : draft.stats[which]} (${limits(draft)[which].join('-')})`, ['UP', 'DOWN'], 'horizontal')
+        draft = modify(draft, which, way === 0 ? 1 : -1)
+      }
       this.ui.print('NAME?', true)
-      const name = (await this.ui.inputString()).trim() || `HERO ${members.length + 1}`
-      const character = createCharacter({ name, race, classIndex, sex, alignment, stats }, random)
-      recompute(character, [], types)
-      const member: Member = { character, items: [] }
-      members.push(member)
+      const name = await this.ui.inputString()
+      const member = await build({ name, alignment, draft })
       this.ui.print(await this.sheetOf(member), true)
       await this.ui.menu(undefined, ['PRESS <RETURN> OR BUTTON TO CONTINUE'], 'horizontal')
     }
