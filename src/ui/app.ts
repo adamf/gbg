@@ -16,6 +16,7 @@ import { BATTLE_STEPS, type Battle, type Fighter } from '../engine/battle.js'
 import { drawBattle, playEffects, SQUARE, viewport, type BattleArt } from './battle-view.js'
 import { className, characterLevel } from '../formats/character.js'
 import { devDataSource, pickDirectory, sourceFromFiles, supportsDirectoryPicker } from './files.js'
+import { mapName } from '../formats/detect.js'
 import { drawMinimap } from './minimap.js'
 import { drawOverland } from './overland-view.js'
 import type { OverlandMap } from '../formats/overland.js'
@@ -614,6 +615,12 @@ async function openPlayScreen(lib: GameLibrary): Promise<GameSession> {
   viewer.start()
 
   overlandArt = undefined
+  // Nothing of the last game shows while the new one is chosen.
+  partyPanel.classList.remove('shown')
+  levelName.textContent = ''
+  whereLine.textContent = ''
+  clockLine.textContent = ''
+  mapCanvas.getContext('2d')?.clearRect(0, 0, mapCanvas.width, mapCanvas.height)
   session = new GameSession(lib, pageUi)
   // Reachable from the console in development, for poking at the running game.
   if (import.meta.env.DEV) (window as unknown as { gbg?: unknown }).gbg = { session, library: lib }
@@ -652,7 +659,10 @@ function refreshHud(state: PartyState): void {
   if (session?.overhead) {
     const { worldX, y, facing } = session.overlandPosition
     whereLine.textContent = `${worldX},${y} · ${COMPASS[facing]}`
+    levelName.textContent = 'The Wilderness'
   } else {
+    if (levelName.textContent === 'The Wilderness' && currentMap) levelName.textContent = mapName(library?.game.id ?? 'unknown', currentMap.id)
+
     whereLine.textContent =
       `${state.row},${state.col} · ${state.facing}` +
       (cell && cell.event !== 0 ? ` · event ${cell.event}` : '')
