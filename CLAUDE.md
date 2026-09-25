@@ -97,6 +97,11 @@ one server-side, or check a `.DAX` into git is the wrong change.
 - **Scrolls** — a Magic User or Clerical Scroll carries up to three spells in its
   affect bytes; a caster of its class reads one (USE, at camp or in a fight) at
   sixth level or their own, and a magic-user can SCRIBE one into the book at camp.
+- **The look** — a sheet of parchment on a dark oak table: panels are paper with ink,
+  rubricated headings and gilt corners drawn in CSS; the table, pads and sidebar are
+  leather and brass. Type is Cinzel for titles and buttons and IM Fell English for
+  everything read, both bundled from `@fontsource` so nothing is fetched. The battle
+  screen keeps the original's own frame, and the art is never touched.
 - **The page** — a stage for the 3D view, the wilderness or a fight; a sidebar with
   a compass, the day and hour, the minimap and a party roster whose rows open a
   character sheet; a bottom bar with the message box, an on-screen pad (eight ways
@@ -109,7 +114,7 @@ one server-side, or check a `.DAX` into git is the wrong change.
   each class's level and the experience still needed and a Train button where one
   qualifies, camp a panel with everyone's wounds and spell slots and the hours a rest
   will take, a strip above the field shows the round's order of play, a new party is
-  rolled in a panel (race, dice, the classes the dice allow, sex, alignment, name),
+  rolled in a panel (race, sex, class, alignment, the dice, MODIFY, name),
   and saves are numbered slots in the browser's storage with a picture of the map,
   the day and hour and the party, chosen from a panel to save into or load. The
   ending's pictures are composed in layers on one screen with Next between them. Sound

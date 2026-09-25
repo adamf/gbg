@@ -1,3 +1,8 @@
+import '@fontsource/cinzel/400.css'
+import '@fontsource/cinzel/500.css'
+import '@fontsource/cinzel-decorative/400.css'
+import '@fontsource/im-fell-english/400.css'
+import '@fontsource/im-fell-english/400-italic.css'
 /**
  * Wires the page together: pick a folder, choose a level, walk around in it, and
  * let the level's script talk back.
@@ -919,7 +924,7 @@ const pageUi: SessionUi = {
           cell.down.title = `Down, no lower than ${min}`
           cell.up.title = key === 'str' && max === 18 ? 'Up, to 18 and on into the percentile for a fighting class' : `Up, no higher than ${max}`
         }
-        el('createRollWords').textContent = `AGE ${draft.age}. MODIFY WITH THE ARROWS, AS THE ORIGINAL ALLOWED: UP TO THE RACE'S BEST, HIT POINTS TO THE CLASS'S.`
+        el('createRollWords').textContent = `Age ${draft.age}. Modify with the arrows, as the original allowed: up to the race's best, hit points to the class's.`
       }
       const render = (): void => {
         choice(el('createRaces'), view.races.map((r) => r.toUpperCase()), view.races.indexOf(race), (i) => { race = view.races[i]!; const allowed = view.classes(race); if (!allowed.includes(classIndex)) classIndex = allowed[0]!; if (!view.alignmentsFor(classIndex).includes(alignment)) alignment = view.alignmentsFor(classIndex)[0]!; reroll(); render() })
@@ -930,7 +935,7 @@ const pageUi: SessionUi = {
         choice(el('createAlign'), alignments.map((a) => view.alignments[a]!), alignments.indexOf(alignment), (i) => { alignment = alignments[i]!; render() })
         renderDice()
         const members = view.members()
-        el('createRoster').replaceChildren(...(members.length === 0 ? [Object.assign(document.createElement('span'), { className: 'spellLine', textContent: 'NOBODY YET. SIX AT MOST.' })] : members.map((m, i) => {
+        el('createRoster').replaceChildren(...(members.length === 0 ? [Object.assign(document.createElement('span'), { className: 'spellLine', textContent: 'Nobody yet. Six at most.' })] : members.map((m, i) => {
           const row = document.createElement('div'); row.className = 'who'
           const n = document.createElement('div'); n.className = 'n'; n.textContent = m.name
           const acts = document.createElement('div'); acts.className = 'acts'
@@ -947,7 +952,7 @@ const pageUi: SessionUi = {
       el('createAdd').onclick = () => {
         const name = (el('createName') as HTMLInputElement).value
         void view.add({ name, alignment, draft }).then((sheet) => {
-          words.textContent = `${sheet.name} JOINS: ${sheet.title}, HP ${sheet.hpMax}, AC ${sheet.ac}.`
+          words.textContent = `${sheet.name} joins the company: ${sheet.title.toLowerCase()}, ${sheet.hpMax} hit points, armour class ${sheet.ac}.`
           ;(el('createName') as HTMLInputElement).value = ''
           reroll()
           render()
@@ -960,7 +965,7 @@ const pageUi: SessionUi = {
       cells.clear()
       render()
       showOverlay(createOverlay)
-      ;(el('createName') as HTMLInputElement).focus()
+      ;(el('createName') as HTMLInputElement).focus({ preventScroll: true })
     })
   },
 
