@@ -66,6 +66,8 @@ export const POOL_ADDRESSES = {
   triedToExit: 0x6dd5,
   /** The area number the original names its files by (coab's area2 game_area); the scripts set it before NEW ECL. */
   gameArea: 0x6e12,
+  /** The head a script's PICTURE composes over a BODY block when no PIC block has its number. */
+  pictureHead: 0x6de1,
   /** The three wall-set block ids in play; the original reloads them from the area's WALLDEF on a load (−1 = none, 0 = the area's block 0 holds all three). */
   wallSets: 0x4afa,
   /** Overland: the party's square in the wilderness script's window, x then y. */

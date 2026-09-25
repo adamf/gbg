@@ -124,6 +124,32 @@ export interface SheetData {
   spells: string[]
   prepared: string[]
   caster: boolean
+  /** The picture and the combat icon, ready and in action, when the folder has the art. */
+  portrait?: Rgba
+  icon?: Rgba
+  actionIcon?: Rgba
+}
+
+/** What the original's ALTER let a player change about a character's looks. */
+export interface Looks {
+  portraitHead: number
+  portraitBody: number
+  iconHead: number
+  iconBody: number
+  iconSize: number
+  iconColours: number[]
+}
+
+/** The page's picture-and-icon editor works through this; `render` draws any looks, `keep` takes them. */
+export interface AlterView {
+  name: string
+  looks: Looks
+  heads: number
+  bodies: number
+  iconHeads: number
+  iconWeapons: number
+  render(looks: Looks): Promise<{ portrait?: Rgba; icon?: Rgba; actionIcon?: Rgba }>
+  keep(looks: Looks): void
 }
 /** One class and level of a caster's book: how many slots, what is known, what is chosen. */
 export interface SpellChoice {
@@ -185,6 +211,8 @@ export interface SessionUi {
   camp?(view: CampView): Promise<void>
   /** A page with a party-creation panel; resolves with the party rolled, empty for the pre-made one. */
   create?(view: CreateView): Promise<void>
+  /** A page with a picture-and-icon editor, the original's HEAD, BODY and icon screens; resolves when kept or left. */
+  alter?(view: AlterView): Promise<void>
   /** A page that shows the closing pictures its own way; the pictures in order, and the closing words. */
   ending?(pictures: readonly Rgba[], words: readonly string[]): Promise<void>
   /**
@@ -1373,7 +1401,39 @@ export class GameSession {
       spells: spells.map((n) => n.toUpperCase()),
       prepared: prepared.map((n) => n.toUpperCase()),
       caster: canCast(c),
+      portrait: await this.library.partyPortrait(c),
+      icon: await this.library.partyIcon(c),
+      actionIcon: await this.library.partyIcon(c, true),
     }
+  }
+
+  /** The original's ALTER: the picture's head and body, the icon's parts, size and colours. */
+  async alterLooks(index: number): Promise<void> {
+    const member = this.roster.members[index]
+    if (!member || !this.ui.alter) return
+    const c = member.character
+    const { ICON_HEADS, ICON_WEAPONS, PORTRAIT_BODIES, PORTRAIT_HEADS } = await import('../formats/portrait.js')
+    await this.ui.alter({
+      name: c.name,
+      looks: { portraitHead: c.portraitHead, portraitBody: c.portraitBody, iconHead: c.iconHead, iconBody: c.iconBody, iconSize: c.iconSize, iconColours: [...c.iconColours] },
+      heads: PORTRAIT_HEADS.length,
+      bodies: PORTRAIT_BODIES.length,
+      iconHeads: ICON_HEADS,
+      iconWeapons: ICON_WEAPONS,
+      render: async (looks) => ({
+        portrait: await this.library.partyPortrait(looks),
+        icon: await this.library.partyIcon(looks),
+        actionIcon: await this.library.partyIcon(looks, true),
+      }),
+      keep: (looks) => {
+        c.portraitHead = looks.portraitHead
+        c.portraitBody = looks.portraitBody
+        c.iconHead = looks.iconHead
+        c.iconBody = looks.iconBody
+        c.iconSize = looks.iconSize
+        c.iconColours = [...looks.iconColours]
+      },
+    })
   }
 
   /** Readies an item or puts it down; the words when it cannot be. */
@@ -1762,7 +1822,12 @@ export class GameSession {
       inputString: (maxLength) => ui.inputString(maxLength),
       delay: () => ui.delay(),
       picture: async (id) => {
-        ui.picture(id === 0xff ? undefined : await this.library.picture(this.area, id))
+        if (id === 0xff) { ui.picture(undefined); return }
+        // A number no PIC block has is a body: the script left the head's number at 0x6DE1.
+        const image = await this.library.hasPicture(this.area, id)
+          ? await this.library.picture(this.area, id)
+          : await this.library.portrait(this.area, this.memory.read(POOL_ADDRESSES.pictureHead) & 0xff, id)
+        ui.picture(image)
       },
       encounter: async (view) => {
         // Up close it is the portrait; further off, the sprite drawn at that distance.

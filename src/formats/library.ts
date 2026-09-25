@@ -8,6 +8,7 @@
  */
 
 import { readDax, type DaxArchive } from './dax.js'
+import { composePortrait, PORTRAIT_AREA, portraitBodyBlock, portraitHeadBlock } from './portrait.js'
 import { decodeEcl, memStartFor, summariseEvent, type EclProgram, type EventSummary } from './ecl.js'
 import { blankRgba, blit, recolour, type Rgba } from './ega.js'
 import { readCharacter, readItems, type Character, type Item } from './character.js'
@@ -357,7 +358,7 @@ export class GameLibrary {
    * the six colour pairs swapped in. Bodies and heads come in four ids each: +64 for
    * the small size, +128 for the action pose.
    */
-  async partyIcon(character: Character, action = false): Promise<Rgba | undefined> {
+  async partyIcon(character: Pick<Character, 'iconHead' | 'iconBody' | 'iconSize' | 'iconColours'>, action = false): Promise<Rgba | undefined> {
     const offset = (character.iconSize === 1 ? 64 : 0) + (action ? 128 : 0)
     const body = (await this.artBlock('CBODY.DAX', character.iconBody + offset))?.frames[0]
       ?? (await this.artBlock('CBODY.DAX', character.iconBody))?.frames[0]
@@ -367,6 +368,29 @@ export class GameLibrary {
     const icon: Rgba = { width: body.width, height: body.height, pixels: new Uint8ClampedArray(body.pixels) }
     if (head) blit(icon, head, 0, 0)
     return recolour(icon, character.iconColours)
+  }
+
+  /**
+   * A picture put together from the area's HEAD and BODY files: the head strip above
+   * the body. This is how the scripts show a person, and how the party's own pictures
+   * are drawn. Nothing when neither part is in the folder.
+   */
+  async portrait(area: number, headBlock: number, bodyBlock: number): Promise<Rgba | undefined> {
+    const head = (await this.artBlock(`HEAD${area}.DAX`, headBlock))?.frames[0]
+    const body = (await this.artBlock(`BODY${area}.DAX`, bodyBlock))?.frames[0]
+    if (!head && !body) return undefined
+    return composePortrait(head, body)
+  }
+
+  /** A party member's picture, from the numbers in their record and the tables the original kept. */
+  async partyPortrait(character: Pick<Character, 'portraitHead' | 'portraitBody'>): Promise<Rgba | undefined> {
+    return this.portrait(PORTRAIT_AREA, portraitHeadBlock(character.portraitHead), portraitBodyBlock(character.portraitBody))
+  }
+
+  /** Whether an area's PIC file has a block, so a PICTURE command's number can be told from a body's. */
+  async hasPicture(area: number, id: number): Promise<boolean> {
+    const archive = await this.archive(`PIC${area}.DAX`)
+    return archive?.blocks.some((b) => b.id === id) ?? false
   }
 
   /** The overland map, from START.EXE; nothing when the folder has no readable one. */

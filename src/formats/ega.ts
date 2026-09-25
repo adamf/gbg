@@ -120,20 +120,30 @@ export function blit(dst: Rgba, src: Rgba, x: number, y: number): void {
   }
 }
 
+/** The six template colours a party icon is drawn in; each has a bright twin eight above. */
+const ICON_TEMPLATE = [1, 2, 3, 4, 6, 7]
+
 /**
- * Swaps colours in a decoded image the way the combat screen coloured a party
- * member's icon: each pair is an old EGA index in the high nibble and the new one in
- * the low. Pixels are matched back to the palette by their RGB.
+ * Colours a party member's icon the way the original did: the art is drawn in six
+ * template colours and their bright twins, and pair `i` (a byte at 0xC1 + i) puts
+ * its low nibble where template colour `i` was and its high nibble where the bright
+ * twin was. The default pairs leave the art as drawn. Pixels are matched back to the
+ * palette by their RGB.
  */
 export function recolour(image: Rgba, pairs: readonly number[]): Rgba {
-  const swap = new Map<number, number>()
-  for (const pair of pairs) swap.set(pair >> 4, pair & 0x0f)
+  const map = new Map<number, number>()
+  ICON_TEMPLATE.forEach((template, i) => {
+    const pair = pairs[i]
+    if (pair === undefined) return
+    map.set(template, pair & 0x0f)
+    map.set(template + 8, pair >> 4)
+  })
   const out = new Uint8ClampedArray(image.pixels)
   for (let i = 0; i < out.length; i += 4) {
     if (out[i + 3] === 0) continue
     const index = EGA_PALETTE.findIndex(([r, g, b]) => r === out[i] && g === out[i + 1] && b === out[i + 2])
-    const to = index >= 0 ? swap.get(index) : undefined
-    if (to === undefined) continue
+    const to = index >= 0 ? map.get(index) : undefined
+    if (to === undefined || to === index) continue
     const [r, g, b] = EGA_PALETTE[to]!
     out[i] = r
     out[i + 1] = g

@@ -426,17 +426,20 @@ describe('saved games', () => {
 })
 
 describe('recolouring', () => {
-  it('swaps palette indexes by the character’s pairs and leaves the rest', async () => {
+  it('puts each pair’s two colours where the template colour and its bright twin were', async () => {
     const { EGA_PALETTE, recolour } = await import('../src/formats/ega.js')
-    const pixels = new Uint8ClampedArray(3 * 4)
+    const pixels = new Uint8ClampedArray(4 * 4)
     const put = (i: number, index: number) => { const [r, g, b] = EGA_PALETTE[index]!; pixels.set([r, g, b, 255], i * 4) }
-    put(0, 9)
-    put(1, 12)
-    put(2, 5)
-    const out = recolour({ width: 3, height: 1, pixels }, [0x91, 0xc4])
+    put(0, 1) // body, dark
+    put(1, 9) // body, bright
+    put(2, 7) // weapon, dark
+    put(3, 5) // not a template colour
+    // Body pair: COLOR-1 (low) 4, COLOR-2 (high) 12; weapon pair unchanged.
+    const out = recolour({ width: 4, height: 1, pixels }, [0xc4, 0xa2, 0xb3, 0xc4, 0xe6, 0xf7])
     const at = (i: number) => [out.pixels[i * 4], out.pixels[i * 4 + 1], out.pixels[i * 4 + 2]]
-    expect(at(0)).toEqual([...EGA_PALETTE[1]!])
-    expect(at(1)).toEqual([...EGA_PALETTE[4]!])
-    expect(at(2)).toEqual([...EGA_PALETTE[5]!])
+    expect(at(0)).toEqual([...EGA_PALETTE[4]!])
+    expect(at(1)).toEqual([...EGA_PALETTE[12]!])
+    expect(at(2)).toEqual([...EGA_PALETTE[7]!])
+    expect(at(3)).toEqual([...EGA_PALETTE[5]!])
   })
 })

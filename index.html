@@ -299,7 +299,7 @@
   }
   .overlay input::placeholder { color: var(--ink-faint); font-style: italic; }
   .overlay input:focus { outline: none; border-bottom-color: var(--rubric); background: #ffffff50; }
-  #sheetBox { min-width: min(640px, 100%); }
+  #sheetBox { min-width: min(720px, 100%); }
   .sheetHead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .sheetHead h3 { margin: 0; text-align: left; }
   .sheetHead h3::after { display: none; }
@@ -374,6 +374,30 @@
   .slot .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .slot .acts button { padding: 4px 10px; font-size: 11.5px; }
   @media (max-width: 720px) { .createGrid { grid-template-columns: 1fr; } }
+  /* ---- the likeness: a picture and a combat icon ---- */
+  .figure { float: right; margin: 0 0 10px 18px; display: grid; gap: 6px; justify-items: center; }
+  .figure .portrait, #alterPortrait { width: 264px; height: 264px; image-rendering: pixelated; border: 1.5px solid var(--ink); box-shadow: inset 0 0 0 3px var(--paper), inset 0 0 0 4px #b8892b99; background: #000; display: block; }
+  .figure .icons { display: flex; gap: 6px; }
+  .figure .icons canvas, .iconPreview canvas { width: 72px; height: 72px; image-rendering: pixelated; background: #5c5c5c; border: 1px solid var(--ink); }
+  .figure button { padding: 5px 10px; }
+  .alterGrid { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; }
+  .steps { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .steps span { min-width: 120px; text-align: center; font-size: 14px; }
+  .steps button { padding: 4px 10px; font-family: var(--serif); text-transform: none; }
+  .iconPreview { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .iconPreview > div { display: grid; grid-template-columns: auto auto; gap: 4px 6px; align-items: center; }
+  .iconPreview > div > span { grid-column: 1 / 3; font: 500 10px var(--caps); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+  .iconPreview .iconSteps { display: block; }
+  .iconPreview .iconSteps .steps { margin-top: 4px; }
+  .paints { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin-top: 14px; align-items: center; }
+  .paints .part { font: 500 11px var(--caps); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+  .pairRows { display: grid; gap: 3px; }
+  .swatches { display: flex; gap: 2px; align-items: center; }
+  .swatches span { width: 44px; font-size: 12px; font-style: italic; color: var(--ink-soft); }
+  .swatch { width: 18px; height: 18px; padding: 0; border: 1px solid #00000066; border-radius: 2px; box-shadow: none; }
+  .overlay .box button.swatch:not(.primary) { background-image: none; }
+  .swatch.picked { outline: 2px solid var(--rubric); outline-offset: 1px; }
+  @media (max-width: 860px) { .alterGrid { grid-template-columns: 1fr; } .figure { float: none; margin: 0 auto 10px; } }
   #ending { background: #000; padding: 0; }
   #ending .box { background: none; border: none; box-shadow: none; max-width: none; display: grid; place-items: center; gap: 10px; padding: 16px; color: var(--paper); }
   #ending .box .row { background: none; }
@@ -577,6 +601,33 @@
         </div>
       </div>
       <div class="row"><button id="createPremade">Use the pre-made party</button><button id="createDone" class="primary">Begin</button></div>
+    </div>
+  </div>
+  <div id="alter" class="overlay">
+    <div class="box" id="alterBox" style="min-width:min(960px,100%)">
+      <h3 id="alterTitle">The Likeness</h3><p class="motto">As the council's limner would paint you, and as the field will see you.</p>
+      <div class="alterGrid">
+        <div>
+          <h4>The picture</h4>
+          <canvas id="alterPortrait" class="portrait" width="176" height="176"></canvas>
+          <div class="steps"><button id="alterHeadPrev" title="The head before">◀</button><span id="alterHeadWords"></span><button id="alterHeadNext" title="The next head">▶</button></div>
+          <div class="steps"><button id="alterBodyPrev" title="The body before">◀</button><span id="alterBodyWords"></span><button id="alterBodyNext" title="The next body">▶</button></div>
+        </div>
+        <div>
+          <h4>The combat icon</h4>
+          <div class="iconPreview">
+            <div><span>Old</span><canvas id="alterOldIcon"></canvas><canvas id="alterOldAction"></canvas></div>
+            <div><span>New</span><canvas id="alterIcon"></canvas><canvas id="alterAction"></canvas></div>
+            <div class="iconSteps">
+              <div class="steps"><button id="alterIconHeadPrev">◀</button><span id="alterIconHeadWords"></span><button id="alterIconHeadNext">▶</button></div>
+              <div class="steps"><button id="alterIconWeaponPrev">◀</button><span id="alterIconWeaponWords"></span><button id="alterIconWeaponNext">▶</button></div>
+              <div class="steps"><button id="alterSize" title="Small or large">Large</button></div>
+            </div>
+          </div>
+          <div class="paints" id="alterPaints"></div>
+        </div>
+      </div>
+      <div class="row"><button id="alterExit">Leave it as it was</button><button id="alterKeep" class="primary">Keep</button></div>
     </div>
   </div>
   <div id="ending" class="overlay">

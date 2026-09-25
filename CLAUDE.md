@@ -32,6 +32,12 @@ one server-side, or check a `.DAX` into git is the wrong change.
   race's and sex's bounds and raised to the class's minimum; hit points the better of two
   dice with constitution, shared between classes; and MODIFY, a point up or down on any
   ability or the hit points within those bounds, strength running on into the percentile.
+  Then the likeness, as the original's HEAD, BODY and icon screens had it: a picture
+  from the fourteen heads and twelve bodies the game's tables name in HEAD3 and
+  BODY3, and the combat icon's head, weapon, size and six colour pairs, each pair a
+  part with its shade and its light; the sheet's Picture and icon button opens the
+  same panel later. A script's PICTURE with no PIC block of that number is a body
+  with the head the script left at 0x6DE1.
 - **The party** — characters and inventories read from the CHRDATA files a saved game
   names, with hit points, saving throws, coins and the selected-character view the
   scripts read at 0x6B00. Damage lands; nobody fights back yet.

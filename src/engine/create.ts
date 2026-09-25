@@ -16,6 +16,7 @@
 import { CHARACTER_RECORD_SIZE, CLASS_TRACKS, CLASSES, RACES, readCharacter, type Character } from '../formats/character.js'
 import type { Random } from './combat.js'
 import { spellSlotsFor } from './training.js'
+import { DEFAULT_ICON_COLOURS, PORTRAIT_BODIES, PORTRAIT_HEADS } from '../formats/portrait.js'
 
 export type RaceName = (typeof RACES)[number]
 export type ClassName = (typeof CLASSES)[number]
@@ -321,8 +322,13 @@ export function createCharacter(rolled: Rolled, random: Random): Character {
   c.status = 'okay'
   c.statusByte = 0
   c.attacks = { count: 2, dice: 1, sides: 2, bonus: 0, range: 0 }
-  c.icon = tracks.every((t) => t === 2 || t === 6) ? 1 : 2
-  c.iconColours = [0x91, 0xa2, 0xb3, 0xc4, 0xe6, 0xf7]
+  // The original dealt a picture at random and let HEAD and BODY change it; the icon starts plain.
+  c.portraitHead = random(PORTRAIT_HEADS.length - 1) + 1
+  c.portraitBody = random(PORTRAIT_BODIES.length - 1) + 1
+  c.iconHead = 0
+  c.iconBody = 0
+  c.iconId = 0
+  c.iconColours = [...DEFAULT_ICON_COLOURS]
   c.iconSize = draft.race === 'dwarf' || draft.race === 'gnome' || draft.race === 'halfling' ? 1 : 2
   if (tracks.includes(6)) c.thiefSkills = [30, 25, 20, 15, 10, 10, 85, 0]
 

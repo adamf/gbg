@@ -9,11 +9,11 @@ import '@fontsource/im-fell-english/400-italic.css'
  */
 
 import { GameLibrary, type FileSource, type LevelRef } from '../formats/library.js'
-import type { Rgba } from '../formats/ega.js'
+import { EGA_PALETTE, type Rgba } from '../formats/ega.js'
 import { DIRECTIONS, type GeoMap } from '../formats/geo.js'
 import { DungeonViewer } from '../render/viewer.js'
 import type { PartyState } from '../engine/party.js'
-import { GameSession, type MoveCommand, type SessionUi, type Snapshot } from '../engine/session.js'
+import { GameSession, type AlterView, type Looks, type MoveCommand, type SessionUi, type Snapshot } from '../engine/session.js'
 import type { CombatOutcome, EncounterView, MonsterGroup } from '../engine/ecl-vm.js'
 import type { Member } from '../engine/roster.js'
 import type { Combatant } from '../engine/combat.js'
@@ -26,6 +26,7 @@ import { drawMinimap } from './minimap.js'
 import { deleteSlot, listSlots, readSlot, writeSlot, type SlotMeta } from './saves.js'
 import { play, setSound, soundOn } from './sound.js'
 import type { CreateKey, CreateView } from '../engine/session.js'
+import { ICON_PARTS, stepPortrait, withColour } from '../formats/portrait.js'
 import { drawOverland } from './overland-view.js'
 import type { OverlandMap } from '../formats/overland.js'
 
@@ -82,6 +83,7 @@ const shopOverlay = el('shop')
 const hallOverlay = el('hall')
 const campOverlay = el('camp')
 const createOverlay = el('create')
+const alterOverlay = el('alter')
 const savesOverlay = el('saves')
 const endingOverlay = el('ending')
 const soundButton = el('soundButton')
@@ -92,12 +94,36 @@ const keysOverlay = el('keys')
 const searchButton = el('searchButton')
 /** Whichever overlay is up, so the keys go to it. */
 let openOverlay: HTMLElement | undefined
-const ALL_OVERLAYS = (): HTMLElement[] => [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, savesOverlay, endingOverlay]
+const ALL_OVERLAYS = (): HTMLElement[] => [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, alterOverlay, savesOverlay, endingOverlay]
 /** Shows one overlay in place of any other, without telling the others they were closed. */
-function showOverlay(which: HTMLElement): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); which.classList.add('shown'); openOverlay = which }
+/** Which panel each panel was opened over, so closing a child shows its parent again: the book over camp, the likeness over the sheet. */
+const parents = new Map<HTMLElement, HTMLElement | undefined>()
+function showOverlay(which: HTMLElement): void { parents.set(which, openOverlay === which ? parents.get(which) : openOverlay); for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); which.classList.add('shown'); openOverlay = which }
+/** Closes one panel, settling its promise, and brings back the panel it was opened over. */
+function hideOverlay(which: HTMLElement): void {
+  which.classList.remove('shown')
+  const closer = takeCloser(which)
+  const parent = parents.get(which)
+  parents.delete(which)
+  if (parent && parent !== which) { parent.classList.add('shown'); openOverlay = parent } else openOverlay = undefined
+  closer?.()
+}
+function takeCloser(which: HTMLElement): (() => void) | undefined {
+  let closer: (() => void) | undefined
+  if (which === bookOverlay) { closer = bookClosed; bookClosed = undefined }
+  else if (which === shopOverlay) { closer = shopClosed; shopClosed = undefined }
+  else if (which === hallOverlay) { closer = hallClosed; hallClosed = undefined }
+  else if (which === campOverlay) { closer = campClosed; campClosed = undefined }
+  else if (which === createOverlay) { closer = createClosed; createClosed = undefined }
+  else if (which === alterOverlay) { closer = alterClosed; alterClosed = undefined }
+  else if (which === savesOverlay) { closer = savesClosed; savesClosed = undefined }
+  else if (which === endingOverlay) { closer = endingClosed; endingClosed = undefined }
+  return closer
+}
 /** Closes whatever is up and tells its panel so. */
-function closeOverlays(): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); openOverlay = undefined; const closers = [bookClosed, shopClosed, hallClosed, campClosed, createClosed, savesClosed, endingClosed]; bookClosed = shopClosed = hallClosed = campClosed = createClosed = savesClosed = endingClosed = undefined; for (const closer of closers) closer?.() }
+function closeOverlays(): void { for (const o of ALL_OVERLAYS()) o.classList.remove('shown'); openOverlay = undefined; const closers = [bookClosed, shopClosed, hallClosed, campClosed, createClosed, alterClosed, savesClosed, endingClosed]; bookClosed = shopClosed = hallClosed = campClosed = createClosed = alterClosed = savesClosed = endingClosed = undefined; for (const closer of closers) closer?.() }
 let createClosed: (() => void) | undefined
+let alterClosed: (() => void) | undefined
 let savesClosed: (() => void) | undefined
 let endingClosed: (() => void) | undefined
 let hallClosed: (() => void) | undefined
@@ -156,7 +182,7 @@ function openSaves(mode: 'save' | 'load'): Promise<Snapshot | undefined> {
   return new Promise((resolve) => {
     const words = el('savesWords')
     let done = false
-    const finish = (value: Snapshot | undefined): void => { if (done) return; done = true; savesClosed = undefined; closeOverlays(); resolve(value) }
+    const finish = (value: Snapshot | undefined): void => { if (done) return; done = true; savesClosed = undefined; hideOverlay(savesOverlay); resolve(value) }
     const render = (): void => {
       const slots = listSlots()
       el('savesTitle').textContent = mode === 'save' ? 'SAVE THE GAME' : 'SAVED GAMES'
@@ -951,11 +977,14 @@ const pageUi: SessionUi = {
       el('createRoll').onclick = () => { reroll(); renderDice() }
       el('createAdd').onclick = () => {
         const name = (el('createName') as HTMLInputElement).value
-        void view.add({ name, alignment, draft }).then((sheet) => {
+        void view.add({ name, alignment, draft }).then(async (sheet) => {
           words.textContent = `${sheet.name} joins the company: ${sheet.title.toLowerCase()}, ${sheet.hpMax} hit points, armour class ${sheet.ac}.`
           ;(el('createName') as HTMLInputElement).value = ''
           reroll()
+          // As the original did: the picture's head and body, then the icon, before the next hero.
+          await session?.alterLooks(view.members().length - 1)
           render()
+          showOverlay(createOverlay)
         })
       }
       el('createPremade').onclick = () => { while (view.members().length > 0) view.remove(0); closeOverlays(); resolve() }
@@ -969,7 +998,83 @@ const pageUi: SessionUi = {
     })
   },
 
+  /** The original's HEAD, BODY and icon screens as one panel: the picture's parts, the icon's parts, size and six colour pairs. */
+  alter(view: AlterView) {
+    return new Promise<void>((resolve) => {
+      let looks: Looks = { ...view.looks, iconColours: [...view.looks.iconColours] }
+      const portrait = el('alterPortrait') as HTMLCanvasElement
+      const icon = el('alterIcon') as HTMLCanvasElement
+      const action = el('alterAction') as HTMLCanvasElement
+      el('alterTitle').textContent = `${view.name}'s Likeness`
+      void view.render(view.looks).then((old) => { paintOn(el('alterOldIcon') as HTMLCanvasElement, old.icon); paintOn(el('alterOldAction') as HTMLCanvasElement, old.actionIcon) })
+      let pending = 0
+      const redraw = (): void => {
+        const mine = ++pending
+        void view.render(looks).then((drawn) => {
+          if (mine !== pending) return
+          paintOn(portrait, drawn.portrait); paintOn(icon, drawn.icon); paintOn(action, drawn.actionIcon)
+        })
+        el('alterHeadWords').textContent = `Head ${looks.portraitHead} of ${view.heads}`
+        el('alterBodyWords').textContent = `Body ${looks.portraitBody} of ${view.bodies}`
+        el('alterIconHeadWords').textContent = `Head ${looks.iconHead + 1} of ${view.iconHeads}`
+        el('alterIconWeaponWords').textContent = `Weapon ${looks.iconBody + 1} of ${view.iconWeapons}`
+        el('alterSize').textContent = looks.iconSize === 1 ? 'Small' : 'Large'
+        for (const swatch of el('alterPaints').querySelectorAll<HTMLElement>('.swatch')) {
+          const pair = looks.iconColours[Number(swatch.dataset.pair)] ?? 0
+          const which = Number(swatch.dataset.which)
+          const current = which === 0 ? pair & 0x0f : pair >> 4
+          swatch.classList.toggle('picked', current === Number(swatch.dataset.colour))
+        }
+      }
+      const step = (id: string, act: () => void): void => { el(id).onclick = () => { act(); redraw() } }
+      step('alterHeadPrev', () => { looks.portraitHead = stepPortrait(looks.portraitHead, view.heads, -1) })
+      step('alterHeadNext', () => { looks.portraitHead = stepPortrait(looks.portraitHead, view.heads, 1) })
+      step('alterBodyPrev', () => { looks.portraitBody = stepPortrait(looks.portraitBody, view.bodies, -1) })
+      step('alterBodyNext', () => { looks.portraitBody = stepPortrait(looks.portraitBody, view.bodies, 1) })
+      step('alterIconHeadPrev', () => { looks.iconHead = (looks.iconHead + view.iconHeads - 1) % view.iconHeads })
+      step('alterIconHeadNext', () => { looks.iconHead = (looks.iconHead + 1) % view.iconHeads })
+      step('alterIconWeaponPrev', () => { looks.iconBody = (looks.iconBody + view.iconWeapons - 1) % view.iconWeapons })
+      step('alterIconWeaponNext', () => { looks.iconBody = (looks.iconBody + 1) % view.iconWeapons })
+      step('alterSize', () => { looks.iconSize = looks.iconSize === 1 ? 2 : 1 })
+      // Six pairs, two colours each, sixteen swatches a colour.
+      const paints = el('alterPaints'); paints.replaceChildren()
+      ICON_PARTS.forEach((part, pairIndex) => {
+        const label = document.createElement('div'); label.className = 'part'; label.textContent = part.name
+        paints.append(label)
+        const rows = document.createElement('div'); rows.className = 'pairRows'
+        for (const which of [0, 1] as const) {
+          const row = document.createElement('div'); row.className = 'swatches'
+          const name = document.createElement('span'); name.textContent = which === 0 ? part.first : part.second; row.append(name)
+          EGA_PALETTE.forEach(([r, g, b], colour) => {
+            const swatch = document.createElement('button'); swatch.className = 'swatch'; swatch.type = 'button'
+            swatch.style.background = `rgb(${r},${g},${b})`; swatch.title = `${part.name}, ${which === 0 ? part.first : part.second}: colour ${colour}`
+            swatch.dataset.pair = String(pairIndex); swatch.dataset.which = String(which); swatch.dataset.colour = String(colour)
+            swatch.addEventListener('click', () => { looks.iconColours[pairIndex] = withColour(looks.iconColours[pairIndex] ?? 0, which, colour); redraw() })
+            row.append(swatch)
+          })
+          rows.append(row)
+        }
+        paints.append(rows)
+      })
+      el('alterKeep').onclick = () => { view.keep(looks); hideOverlay(alterOverlay); resolve() }
+      el('alterExit').onclick = () => { looks = view.looks; hideOverlay(alterOverlay); resolve() }
+      alterClosed = resolve
+      redraw()
+      showOverlay(alterOverlay)
+    })
+  },
+
   note,
+}
+
+/** Draws a decoded image on a canvas at its own size; the CSS scales it, pixelated. */
+function paintOn(canvas: HTMLCanvasElement, image: Rgba | undefined): void {
+  canvas.width = image?.width ?? 1
+  canvas.height = image?.height ?? 1
+  const g = canvas.getContext('2d')
+  if (!g) return
+  g.clearRect(0, 0, canvas.width, canvas.height)
+  if (image) g.putImageData(new ImageData(new Uint8ClampedArray(image.pixels), image.width, image.height), 0, 0)
 }
 
 function note(message: string): void {
@@ -1157,6 +1262,16 @@ async function openSheet(index: number): Promise<void> {
   const data = await current.sheetData(index)
   if (!data) return
   const h = (tag: string, cls: string | undefined, text?: string): HTMLElement => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+  const figure = h('div', 'figure')
+  const portrait = document.createElement('canvas'); portrait.className = 'portrait'; paintOn(portrait, data.portrait)
+  const icons = h('div', 'icons')
+  const iconCanvas = document.createElement('canvas'); paintOn(iconCanvas, data.icon)
+  const actionCanvas = document.createElement('canvas'); paintOn(actionCanvas, data.actionIcon)
+  icons.append(iconCanvas, actionCanvas)
+  const alterButton = h('button', undefined, 'Picture and icon') as HTMLButtonElement
+  alterButton.title = "The original's ALTER: the picture's head and body, the icon's parts, size and colours"
+  alterButton.addEventListener('click', () => { void current.alterLooks(index).then(() => openSheet(index)) })
+  figure.append(portrait, icons, alterButton)
   const head = h('div', 'sheetHead')
   head.append(h('h3', undefined, data.name), h('p', 'sub', `${data.title} · LEVEL ${data.level} · ${data.experience} XP · AGE ${data.age}`))
   const stats = h('div', 'stats')
@@ -1176,7 +1291,7 @@ async function openSheet(index: number): Promise<void> {
     })
     items.append(button)
   })
-  sheetBody.replaceChildren(head, stats, vitals, h('div', 'spellLine', data.items.length > 0 ? 'THE PACK — CLICK TO READY OR PUT DOWN' : 'NOTHING CARRIED'), items)
+  sheetBody.replaceChildren(figure, head, stats, vitals, h('div', 'spellLine', data.items.length > 0 ? 'THE PACK — CLICK TO READY OR PUT DOWN' : 'NOTHING CARRIED'), items)
   if (data.caster) {
     sheetBody.append(h('div', 'spellLine', `MEMORISED: ${data.spells.length > 0 ? data.spells.join(', ') : 'NONE'}`))
     sheetBody.append(h('div', 'spellLine', `PREPARED FOR THE NEXT REST: ${data.prepared.length > 0 ? data.prepared.join(', ') : 'NONE'}`))
@@ -1218,8 +1333,8 @@ function openBook(index: number): Promise<void> {
         }
       }
       const ids = (): number[] => { const out: number[] = []; for (const [id, n] of chosen) for (let i = 0; i < n; i++) out.push(id); return out }
-      el('bookDone').onclick = () => { void current.setPrepared(index, ids()).then(() => closeOverlays()) }
-      el('bookAuto').onclick = () => { closeOverlays(); void current.setPrepared(index, []).then(async () => { const member = current.roster.members[index]; if (member) { const { autoPrepare } = await import('../engine/casting.js'); autoPrepare(member.character); pageUi.print(`${member.character.name} PREPARES THE USUAL.`, true) } }) }
+      el('bookDone').onclick = () => { void current.setPrepared(index, ids()).then(() => hideOverlay(bookOverlay)) }
+      el('bookAuto').onclick = () => { hideOverlay(bookOverlay); void current.setPrepared(index, []).then(async () => { const member = current.roster.members[index]; if (member) { const { autoPrepare } = await import('../engine/casting.js'); autoPrepare(member.character); pageUi.print(`${member.character.name} PREPARES THE USUAL.`, true) } }) }
       bookClosed = resolve
       render()
       showOverlay(bookOverlay)
@@ -1266,8 +1381,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#pad8 button[
 for (const button of document.querySelectorAll<HTMLButtonElement>('#actions button[data-act]')) {
   button.addEventListener('click', () => doAction(button.dataset.act!))
 }
-for (const id of ['sheetDone', 'logDone', 'keysDone']) el(id).addEventListener('click', closeOverlays)
-for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, savesOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) closeOverlays() })
+for (const [id, overlay] of [['sheetDone', sheetOverlay], ['logDone', logOverlay], ['keysDone', keysOverlay]] as const) el(id).addEventListener('click', () => hideOverlay(overlay))
+for (const overlay of [sheetOverlay, bookOverlay, logOverlay, keysOverlay, shopOverlay, hallOverlay, campOverlay, createOverlay, alterOverlay, savesOverlay]) overlay.addEventListener('click', (event) => { if (event.target === overlay) hideOverlay(overlay) })
 // Over a fighter on the field, a word or two about them.
 battleCanvas.addEventListener('mousemove', (event) => {
   const battle = openTurn?.battle ?? (window as unknown as { gbg?: { battle?: Battle } }).gbg?.battle
@@ -1321,7 +1436,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (!playScreen.classList.contains('shown')) return
   // An overlay swallows the keys but Escape and Enter.
-  if (openOverlay) { if (event.key === 'Escape' || event.key === 'Enter') { event.preventDefault(); closeOverlays() } return }
+  if (openOverlay) { if (event.key === 'Escape' || event.key === 'Enter') { event.preventDefault(); hideOverlay(openOverlay) } return }
 
   if (openTurn && !openMenu && !aiming) {
     const { battle, fighter, refresh } = openTurn

@@ -89,7 +89,8 @@ describe('creating a character, the original’s way', () => {
     expect(c.savingThrows).toEqual([14, 15, 16, 17, 17])
     expect(c.money[3]).toBe(150)
     expect(c.spellbook).toEqual([])
-    expect(c.icon).toBe(1)
+    expect(c.portraitHead).toBeGreaterThanOrEqual(1)
+    expect(c.iconColours).toEqual([0x91, 0xa2, 0xb3, 0xc4, 0xe6, 0xf7])
   })
 
   it('gives a cleric/magic-user both books and slots', () => {

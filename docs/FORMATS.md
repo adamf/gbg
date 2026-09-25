@@ -328,10 +328,25 @@ The hall's doorway is a cell walled on all four sides with doors in two of them.
 `CBODY.DAX` and `CHEAD.DAX` are the party's icons in parts. A body is a 48×48 frame
 (the figure and its readied weapon; 32 of them), a head a 48×20 strip drawn over the
 body's top (14 of them). Each part has four ids: `n` normal, `n + 64` the small size,
-`n + 128` the action pose, `n + 192` small and in action. The art is drawn in template
-colours that the record's six swap pairs at 0xC1 replace. `CPIC?.DAX` are the
+`n + 128` the action pose, `n + 192` small and in action. The art is drawn in six template
+colours (1, 2, 3, 4, 6, 7) and their bright twins (9 to 15) that the record's six
+pairs at 0xC1 replace, a pair a part: body, arm, leg, hair and face, shield, weapon. `CPIC?.DAX` are the
 monsters' icons, with the same `+128` action frame. `ICON.DAX` is the party on
 horseback for the wilderness map, two frames.
+
+### Pictures of people
+
+`HEAD?.DAX` and `BODY?.DAX` are portraits in two parts: a head 88×40 and a body
+88×48 (as decoded; `dump` writes them at twice the size, like every picture), the head
+drawn above the body to make an 88×88 picture, the size of a PIC.
+A script shows one with PICTURE *n* where no PIC block has that number: *n* is then
+the body, and the head is the word the script wrote at 0x6DE1 just before. The party's
+own pictures are numbered from one in the record (0xBB head, 0xBC body) through two
+tables in START.EXE (at 0xE3B9 in the GOG build): heads 0, 8, 9, 13, 16, 18, 22, 34,
+45, 51, 53, 57, 67, 68 and bodies 1, 2, 3, 4, 7, 8, 18, 24, 26, 33, 35, 37, all in the
+city's HEAD3 and BODY3. The original dealt a new character a picture at random and
+cycled through the tables with HEAD and BODY; this was checked by making characters
+in DOSBox and reading the records it wrote.
 
 `COMSPR.DAX` is what flew across the combat screen: block 0 an arrow upright, 1 an
 arrow on the diagonal, 2 an arrow across, 3 a thrown axe, 4 a flask, 5 a dart, 6 a
@@ -439,11 +454,13 @@ where Curse has 100. Offsets checked against every character Pool of Radiance sh
 | 0xA1 | attacks per round, doubled |
 | 0xA9 | base armour class, `60 - AC` |
 | 0xAC | experience, `i32` |
-| 0xBD, 0xBE | combat icon parts: the CHEAD strip and the CBODY frame (the body is the readied weapon's) |
+| 0xBB, 0xBC | the picture: head and body numbers from one, indexes into the tables below |
+| 0xBD, 0xBE | combat icon parts: the CHEAD strip (fourteen) and the CBODY frame (thirty-two; the weapon held), chosen in the icon editor |
+| 0xBF | which icon slot the original loaded the icon into |
 | 0xB1 | hit points rolled, before the constitution bonus |
 | 0xB8, 0xBA | what a fallen monster is worth: base experience `i16`, plus this much per hit point rolled |
 | 0xC0 | icon size: 1 small (dwarves, gnomes, halflings), 2 normal |
-| 0xC1 | six colour swaps for the icon, old nibble high, new nibble low |
+| 0xC1 | six colour pairs for the icon: the low nibble (COLOR-1) replaces template colour 1, 2, 3, 4, 6 or 7, the high nibble (COLOR-2) its bright twin eight above; the editor called the pairs body, arm, leg, hair-and-face, shield and weapon |
 | 0x10C | health status |
 | 0x110 | to-hit bonus, raw: 40 is none |
 | 0x111, 0x112 | armour class front and behind, `60 - AC` |

@@ -52,9 +52,13 @@ export function writeCharacter(c: Character): Uint8Array {
   data[0xae] = (c.experience >> 16) & 0xff
   data[0xaf] = (c.experience >> 24) & 0xff
   for (let i = 0; i < 6; i++) data[0xb2 + i] = c.spellSlots[i] ?? 0
-  data[0xc0] = c.icon
+  data[0xbb] = c.portraitHead
+  data[0xbc] = c.portraitBody
+  data[0xbd] = c.iconHead
+  data[0xbe] = c.iconBody
+  data[0xbf] = c.iconId
+  data[0xc0] = c.iconSize
   for (let i = 0; i < 6; i++) data[0xc1 + i] = c.iconColours[i] ?? 0
-  data[0xc7] = c.iconSize
   data[0x10c] = STATUS_BYTES[c.status] ?? c.statusByte
   data[0x110] = c.hitBonusRaw & 0xff
   data[0x111] = (60 - c.ac) & 0xff

@@ -83,15 +83,18 @@ export interface Character {
   /** Levels drained by the undead, which restoration gives back. Not saved. */
   drained?: number
   attacks: { count: number; dice: number; sides: number; bonus: number; range?: number; missile?: number }
-  /** Old-to-new colour pairs, a nibble each, applied to the combat icon. */
+  /** The picture: a head and a body number from one, see formats/portrait.ts. */
+  portraitHead: number
+  portraitBody: number
+  /** Six colour pairs for the combat icon: COLOR-1 in the low nibble, COLOR-2 in the high, see formats/portrait.ts. */
   iconColours: number[]
   /** 1 small (dwarves, gnomes, halflings), 2 normal. */
   iconSize: number
-  /** The combat icon's parts: a CHEAD strip over a CBODY frame, the body chosen by the weapon. */
+  /** The combat icon's parts: a CHEAD strip (fourteen) over a CBODY frame (thirty-two, the weapon held). */
   iconHead: number
   iconBody: number
-  /** ICON block holding the combat icon, before recolouring. */
-  icon: number
+  /** Which of the game's icon slots the original loaded this icon into. */
+  iconId: number
   /** Spell ids the character knows. */
   spellbook: number[]
   /** Spell slots per level: three cleric, then three magic-user. */
@@ -186,10 +189,12 @@ export function readCharacter(data: Uint8Array): Character {
     status: STATUSES[statusByte] ?? 'okay',
     attacks: { count: u8(data, 0xa1), dice: u8(data, 0x115), sides: u8(data, 0x117), bonus: i8(data, 0x119) },
     iconColours,
+    portraitHead: u8(data, 0xbb),
+    portraitBody: u8(data, 0xbc),
     iconSize: u8(data, 0xc0),
     iconHead: u8(data, 0xbd),
     iconBody: u8(data, 0xbe),
-    icon: u8(data, 0xbe),
+    iconId: u8(data, 0xbf),
     spellbook,
     spellSlots,
     memorised: [],
